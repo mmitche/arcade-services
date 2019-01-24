@@ -21,6 +21,7 @@ namespace Maestro.Web.Api.v2018_07_16.Models
             Repository = other.Repository;
             Branch = other.Branch;
             Channel = other.Channel == null ? null : new Channel(other.Channel);
+            Enabled = other.Enabled;
         }
 
         public int Id { get; set; }
@@ -33,6 +34,8 @@ namespace Maestro.Web.Api.v2018_07_16.Models
         public string Branch { get; set; }
 
         public Channel Channel { get; set; }
+
+        public bool Enabled { get; set; }
 
 
         public class PostData

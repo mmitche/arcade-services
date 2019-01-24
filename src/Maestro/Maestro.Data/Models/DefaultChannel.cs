@@ -25,5 +25,7 @@ namespace Maestro.Data.Models
         public int ChannelId { get; set; }
 
         public Channel Channel { get; set; }
+
+        public bool Enabled { get; set; } = true;
     }
 }

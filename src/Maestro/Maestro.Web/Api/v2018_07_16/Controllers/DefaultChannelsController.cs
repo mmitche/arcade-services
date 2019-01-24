@@ -29,7 +29,7 @@ namespace Maestro.Web.Api.v2018_07_16.Controllers
 
         [HttpGet]
         [SwaggerResponse((int) HttpStatusCode.OK, Type = typeof(List<DefaultChannel>))]
-        public IActionResult List(string repository = null, string branch = null, int? channelId = null)
+        public IActionResult List(string repository = null, string branch = null, int? channelId = null, bool? enabled = null)
         {
             IQueryable<Data.Models.DefaultChannel> query = _context.DefaultChannels.Include(dc => dc.Channel)
                 .AsNoTracking();
@@ -49,8 +49,43 @@ namespace Maestro.Web.Api.v2018_07_16.Controllers
                 query = query.Where(dc => dc.ChannelId == channelId.Value);
             }
 
+            if (enabled.HasValue)
+            {
+                query = query.Where(dc => dc.Enabled);
+            }
+
             List<DefaultChannel> results = query.AsEnumerable().Select(dc => new DefaultChannel(dc)).ToList();
             return Ok(results);
+        }
+
+        [HttpPost("{id}/enable")]
+        [SwaggerResponse((int)HttpStatusCode.Accepted)]
+        public async Task<IActionResult> Enable(int id)
+        {
+            Data.Models.DefaultChannel defaultChannel = await _context.DefaultChannels.FindAsync(id);
+            if (defaultChannel == null)
+            {
+                return NotFound();
+            }
+
+            defaultChannel.Enabled = true;
+            await _context.SaveChangesAsync();
+            return Accepted(new DefaultChannel(defaultChannel));
+        }
+
+        [HttpPost("{id}/disable")]
+        [SwaggerResponse((int)HttpStatusCode.Accepted)]
+        public async Task<IActionResult> Disable(int id)
+        {
+            Data.Models.DefaultChannel defaultChannel = await _context.DefaultChannels.FindAsync(id);
+            if (defaultChannel == null)
+            {
+                return NotFound();
+            }
+
+            defaultChannel.Enabled = false;
+            await _context.SaveChangesAsync();
+            return Accepted(new DefaultChannel(defaultChannel));
         }
 
         [HttpPost]
