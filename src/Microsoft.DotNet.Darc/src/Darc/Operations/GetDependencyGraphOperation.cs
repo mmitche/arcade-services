@@ -6,6 +6,7 @@ using Microsoft.DotNet.Darc.Helpers;
 using Microsoft.DotNet.Darc.Options;
 using Microsoft.DotNet.DarcLib;
 using Microsoft.DotNet.DarcLib.Helpers;
+using Microsoft.DotNet.Maestro.Client.Models;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
@@ -57,6 +58,42 @@ namespace Microsoft.DotNet.Darc.Operations
                             _options.RepoUri,
                             _options.Version,
                             _options.AssetName);
+                    }
+                    else if (!string.IsNullOrEmpty(_options.Version) && !string.IsNullOrEmpty(_options.AssetName))
+                    {
+                        // If an asset name and version are specified, these are looked up
+                        // in BAR to find the root.
+
+                        Console.WriteLine($"Getting root asset {_options.AssetName}@{_options.Version}");
+                        IRemote barRemote = remoteFactory.GetBarOnlyRemote(Logger);
+                        IEnumerable<Maestro.Client.Models.Asset> assets = await barRemote.GetAssetsAsync(name: _options.AssetName,
+                                                                                                         version: _options.Version);
+                        int assetCount = assets.Count();
+                        if (assetCount > 1)
+                        {
+                            // This should be extremely unlikely so not worrying about traversing into the builds and
+                            // printing for information.
+                            Console.WriteLine($"{_options.AssetName}@{_options.Version} matched {assetCount} assets.");
+                            return Constants.ErrorCode;
+                        }
+                        else if (assetCount == 0)
+                        {
+                            Console.WriteLine($"{_options.AssetName}@{_options.Version} not found");
+                            return Constants.ErrorCode;
+                        }
+                        Asset asset = assets.First();
+                        // Look up the root build to build a dependency detail
+                        Build build = await barRemote.GetBuildAsync(asset.BuildId.Value);
+                        rootDependencies = new List<DependencyDetail>()
+                        {
+                            new DependencyDetail
+                            {
+                                Commit = build.Commit,
+                                Name = asset.Name,
+                                Version = asset.Version,
+                                RepoUri = build.GitHubRepository ?? build.AzureDevOpsRepository
+                            }
+                        };
                     }
                     else
                     {

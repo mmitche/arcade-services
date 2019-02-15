@@ -17,7 +17,7 @@ namespace Microsoft.DotNet.Darc.Options
         [Option("repo", HelpText = "If set, gather dependency information from the remote repository. Requires --version.")]
         public string RepoUri { get; set; }
 
-        [Option('v', "version", HelpText = "Branch, commit or tag to look up if looking up version information remotely.")]
+        [Option('v', "version", HelpText = "Branch, commit, tag or asset version (with asset-name) to look up if looking up version information remotely.")]
         public string Version { get; set; }
 
         [Option("asset-name", HelpText = "Get the graph based on a single asset and not the whole Version.Details.xml contents.")]
