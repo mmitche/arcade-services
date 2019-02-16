@@ -33,6 +33,8 @@ namespace Microsoft.DotNet.Darc.Operations
                 IEnumerable<DependencyDetail> rootDependencies = null;
                 DependencyGraph graph;
                 RemoteFactory remoteFactory = new RemoteFactory(_options);
+                string rootRepoUri = _options.RepoUri;
+                string rootVersion = _options.Version;
 
                 if (!_options.Local)
                 {
@@ -66,15 +68,18 @@ namespace Microsoft.DotNet.Darc.Operations
 
                         Console.WriteLine($"Getting root asset {_options.AssetName}@{_options.Version}");
                         IRemote barRemote = remoteFactory.GetBarOnlyRemote(Logger);
+                        // It's possible that the same asset could have been reported the multiple times for builds
+                        // (e.g. a build on multiple OS's). This is not a problem as long as they came from the same build.
                         IEnumerable<Maestro.Client.Models.Asset> assets = await barRemote.GetAssetsAsync(name: _options.AssetName,
                                                                                                          version: _options.Version);
                         int assetCount = assets.Count();
                         if (assetCount > 1)
                         {
-                            // This should be extremely unlikely so not worrying about traversing into the builds and
-                            // printing for information.
-                            Console.WriteLine($"{_options.AssetName}@{_options.Version} matched {assetCount} assets.");
-                            return Constants.ErrorCode;
+                            if (assets.Select(a => a.BuildId.Value).Distinct().Count() > 1)
+                            {
+                                Console.WriteLine($"{_options.AssetName}@{_options.Version} matched {assetCount} assets.");
+                                return Constants.ErrorCode;
+                            }
                         }
                         else if (assetCount == 0)
                         {
@@ -84,16 +89,15 @@ namespace Microsoft.DotNet.Darc.Operations
                         Asset asset = assets.First();
                         // Look up the root build to build a dependency detail
                         Build build = await barRemote.GetBuildAsync(asset.BuildId.Value);
-                        rootDependencies = new List<DependencyDetail>()
-                        {
-                            new DependencyDetail
-                            {
-                                Commit = build.Commit,
-                                Name = asset.Name,
-                                Version = asset.Version,
-                                RepoUri = build.GitHubRepository ?? build.AzureDevOpsRepository
-                            }
-                        };
+
+                        rootRepoUri = build.GitHubRepository ?? build.AzureDevOpsRepository;
+                        rootVersion = build.Commit;
+
+                        IRemote rootRepoRemote = remoteFactory.GetRemote(rootRepoUri, Logger);
+                        rootDependencies = await rootRepoRemote.GetDependenciesAsync(
+                            rootRepoUri,
+                            rootVersion,
+                            null);
                     }
                     else
                     {
@@ -113,7 +117,10 @@ namespace Microsoft.DotNet.Darc.Operations
 
                     Console.WriteLine($"Building repository dependency graph...");
 
-                    rootDependencies = FilterToolsetDependencies(rootDependencies);
+                    if (rootDependencies != null)
+                    {
+                        rootDependencies = FilterToolsetDependencies(rootDependencies);
+                    }
 
                     if (!rootDependencies.Any())
                     {
@@ -125,12 +132,12 @@ namespace Microsoft.DotNet.Darc.Operations
                     graph = await DependencyGraph.BuildRemoteDependencyGraphAsync(
                         remoteFactory,
                         rootDependencies,
-                        _options.RepoUri ?? LocalHelpers.GetGitDir(Logger),
-                        _options.Version ?? LocalHelpers.GetGitCommit(Logger),
+                        rootRepoUri ?? LocalHelpers.GetGitDir(Logger),
+                        rootVersion ?? LocalHelpers.GetGitCommit(Logger),
                         _options.IncludeToolset,
                         Logger);
                 }
-                else
+                else 
                 {
                     Console.WriteLine($"Getting root dependencies from local repository...");
 

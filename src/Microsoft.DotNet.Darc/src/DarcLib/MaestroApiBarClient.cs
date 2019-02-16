@@ -232,6 +232,10 @@ namespace Microsoft.DotNet.DarcLib
                 {
                     IList<Asset> assetPage = await _barClient.Assets.GetAsync(name, version, buildId, nonShipping, loadLocations: true, page: ++page);
                     assets.AddRange(assetPage);
+                    if (assetPage.Count == 0)
+                    {
+                        break;
+                    }
                 }
                 catch (ApiErrorException e) when (e.Response.StatusCode == HttpStatusCode.NotFound)
                 {
