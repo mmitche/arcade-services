@@ -1,16 +1,16 @@
 import { Component, OnInit, OnChanges } from "@angular/core";
 import { ActivatedRoute } from "@angular/router";
 import { prettyRepository } from "src/app/util/names";
-import { map, tap, shareReplay } from 'rxjs/operators';
+import { map, tap, shareReplay, delay, concat } from 'rxjs/operators';
 import moment from 'moment';
 
-import { BuildGraph, Build } from 'src/maestro-client/models';
+import { BuildGraph, Build, BuildRef } from 'src/maestro-client/models';
 import { MaestroService } from 'src/maestro-client';
-import { Observable } from 'rxjs';
+import { Observable, Subject, combineLatest, of } from 'rxjs';
 import { BuildStatusService } from 'src/app/services/build-status.service';
 import { BuildStatus } from 'src/app/model/build-status';
 import { statefulSwitchMap, StatefulResult, statefulPipe } from 'src/stateful';
-import { WrappedError } from 'src/stateful/helpers';
+import { WrappedError, Loading } from 'src/stateful/helpers';
 
 interface AzDevBuildInfo {
   isMostRecent: boolean;
@@ -31,32 +31,22 @@ export class BuildComponent implements OnInit, OnChanges {
   public build$!: Observable<StatefulResult<Build>>;
   public azDevBuildInfo$!: Observable<StatefulResult<AzDevBuildInfo>>;
 
+  public includeToolsets: boolean = false;
+
   public ngOnInit() {
     const buildId$ = this.route.paramMap.pipe(
       map(params => +(params.get("buildId") as string)),
     );
-    const data$ = buildId$.pipe(
+    this.graph$ = buildId$.pipe(
       statefulSwitchMap(buildId => {
-        return this.maestro.builds.getBuildGraphAsync(buildId).pipe(
-          map(graph => ({ graph, buildId })),
-        );
+        return this.maestro.builds.getBuildGraphAsync(buildId);
       }),
       shareReplay(1),
     );
-    this.graph$ = data$.pipe(
-      statefulPipe(
-        map(t => t.graph),
-      ),
-    );
-    this.build$ = data$.pipe(
-      statefulPipe(
-        map(({graph, buildId}) => {
-          if (buildId in graph.builds) {
-            return graph.builds[buildId];
-          }
-          return new WrappedError(new Error("That build has no graph."));
-        })
-      ),
+    this.build$ = buildId$.pipe(
+      statefulSwitchMap(buildId => {
+        return this.maestro.builds.getBuildAsync(buildId);
+      }),
     );
 
     this.azDevBuildInfo$ = this.build$.pipe(
