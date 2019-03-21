@@ -24,6 +24,7 @@ namespace Microsoft.DotNet.DarcLib
         public const string NameAttributeName = "Name";
         public const string VersionAttributeName = "Version";
         public const string CoherentParentAttributeName = "CoherentParentDependency";
+        public const string CommonChildAttributeName = "CommonChildDependency";
         public const string PinnedAttributeName = "Pinned";
 
         private static string GetVersionPropsElementBaseName(string dependencyName)

@@ -219,6 +219,12 @@ namespace Microsoft.DotNet.DarcLib
                 SetAttribute(versionDetails, newDependency, VersionFiles.CoherentParentAttributeName, dependency.CoherentParentDependencyName);
             }
 
+            // Only add the coherent parent attribute if it is set
+            if (!string.IsNullOrEmpty(dependency.CommonChildDependencyName))
+            {
+                SetAttribute(versionDetails, newDependency, VersionFiles.CommonChildAttributeName, dependency.CommonChildDependencyName);
+            }
+
             SetElement(versionDetails, newDependency, VersionFiles.UriElementName, dependency.RepoUri);
             SetElement(versionDetails, newDependency, VersionFiles.ShaElementName, dependency.Commit);
 
@@ -774,6 +780,7 @@ namespace Microsoft.DotNet.DarcLib
                                     Commit = dependency.SelectSingleNode(VersionFiles.ShaElementName).InnerText,
                                     Version = dependency.Attributes[VersionFiles.VersionAttributeName].Value,
                                     CoherentParentDependencyName = dependency.Attributes[VersionFiles.CoherentParentAttributeName]?.Value,
+                                    CommonChildDependencyName = dependency.Attributes[VersionFiles.CommonChildAttributeName]?.Value,
                                     Pinned = isPinned,
                                     Type = type
                                 };

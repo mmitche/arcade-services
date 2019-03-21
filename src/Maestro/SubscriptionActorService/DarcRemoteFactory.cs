@@ -41,10 +41,10 @@ namespace SubscriptionActorService
         public async Task<IRemote> GetRemoteAsync(string repoUrl, ILogger logger)
         {
             // Normalize the url with the AzDO client prior to attempting to
-            // get a token. When we do coherency updates we build a repo graph and
-            // may end up traversing links to classic azdo uris.
+            // get a token
             string normalizedUrl = AzureDevOpsClient.NormalizeUrl(repoUrl);
             Uri normalizedRepoUri = new Uri(normalizedUrl);
+
             // Look up the setting for where the repo root should be held.  Default to empty,
             // which will use the temp directory.
             string temporaryRepositoryRoot = Configuration.GetValue<string>("DarcTemporaryRepoRoot", null);

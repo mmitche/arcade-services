@@ -27,6 +27,12 @@ namespace Microsoft.DotNet.Darc.Operations
 
             Local local = new Local(Logger);
 
+            if (!string.IsNullOrEmpty(_options.CoherentParentDependencyName) && !string.IsNullOrEmpty(_options.CommonChildDependencyName))
+            {
+                Console.WriteLine("--common-child and --coherent-parent restrictions cannot be combined.");
+                return Constants.ErrorCode;
+            }
+
             DependencyDetail dependency = new DependencyDetail
             {
                 Name = _options.Name,
@@ -34,6 +40,7 @@ namespace Microsoft.DotNet.Darc.Operations
                 RepoUri = _options.RepoUri ?? string.Empty,
                 Commit = _options.Commit ?? string.Empty,
                 CoherentParentDependencyName = _options.CoherentParentDependencyName ?? string.Empty,
+                CommonChildDependencyName = _options.CommonChildDependencyName ?? string.Empty,
                 Pinned = _options.Pinned,
                 Type = type,
             };

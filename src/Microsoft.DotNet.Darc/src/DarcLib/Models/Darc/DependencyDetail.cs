@@ -6,6 +6,9 @@ namespace Microsoft.DotNet.DarcLib
 {
     public class DependencyDetail
     {
+        private string _coherentParentDependencyName;
+        private string _commonChildDependencyName;
+
         public DependencyDetail() { }
         public DependencyDetail(DependencyDetail other)
         {
@@ -16,6 +19,7 @@ namespace Microsoft.DotNet.DarcLib
             Pinned = other.Pinned;
             Type = other.Type;
             CoherentParentDependencyName = other.CoherentParentDependencyName;
+            CommonChildDependencyName = other.CommonChildDependencyName;
         }
 
         public string Name { get; set; }
@@ -80,6 +84,65 @@ namespace Microsoft.DotNet.DarcLib
         ///      ]]>
         /// </summary>
         /// 
-        public string CoherentParentDependencyName { get; set; }
+        public string CoherentParentDependencyName
+        {
+            get => _coherentParentDependencyName;
+            set
+            {
+                if (!string.IsNullOrEmpty(_commonChildDependencyName))
+                {
+                    throw new DarcException("Common child and coherent parent restrictions cannot be combined.");
+                }
+                _coherentParentDependencyName = value;
+            }
+        }
+
+        /// <summary>
+        ///     All dependencies with this common child dependency name will be updated
+        ///     to versions that have the same common child dependency version.  For example:
+        ///     
+        ///        repo A
+        ///            / \
+        ///           /   \
+        ///      dep B     C dep
+        ///          \    /
+        ///           \  /
+        ///        dep  D
+        ///     
+        ///     In this case, in repo A has dependencies on B and C, and those have dependencies on D.
+        ///     A lists B and C has having "CommonChild" D.
+        ///     
+        ///     When updating B and C, darc will search backwards for versions of B and C that have the same common
+        ///     dependency version D and update to those new versions.
+        ///     
+        ///     If A contains an edge to D:
+        ///     
+        ///        repo A
+        ///            /|\
+        ///           / | \
+        ///      dep B  |  C dep
+        ///          \  | /
+        ///           \ |/
+        ///        dep  D
+        ///     
+        ///     Then dependency D referenced in A is also set to the same version referenced in both B and C
+        ///     and is not pulled forward to latest.
+        ///     
+        ///     If B or C are updated (new build produced) without an update to D, then the subscription updating
+        ///     B or C will operate as normal.
+        /// </summary>
+        public string CommonChildDependencyName
+        {
+            get => _commonChildDependencyName;
+            set
+            {
+                if (!string.IsNullOrEmpty(_coherentParentDependencyName))
+                {
+                    throw new DarcException("Common child and coherent parent restrictions cannot be combined.");
+                }
+                _commonChildDependencyName = value;
+            }
+        }
     }
 }
+

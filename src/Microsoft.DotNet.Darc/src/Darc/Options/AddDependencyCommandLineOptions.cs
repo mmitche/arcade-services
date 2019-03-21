@@ -28,9 +28,15 @@ namespace Microsoft.DotNet.Darc.Options
         [Option("pinned", HelpText = "Whether the dependency is pinned or not.")]
         public bool Pinned { get; set; }
 
-        [Option("coherent-parent", HelpText = "Restrict updates to this dependency based on version of a dependency from another repo. " +
+        [Option("coherent-parent", HelpText = "Restrict updates to this dependency based on version of a dependency from another repo." +
+            "Not compatible with common-child. " +
             "See https://github.com/dotnet/arcade/blob/master/Documentation/DependencyDescriptionFormat.md#dependency-description-overview for more information.")]
         public string CoherentParentDependencyName { get; set; }
+
+        [Option("common-child", HelpText = "All dependencies with this common child are restricted to versions that have the same version of the common child. " +
+            "Not compatible with coherent-parent." +
+            "See https://github.com/dotnet/arcade/blob/master/Documentation/DependencyDescriptionFormat.md#dependency-description-overview for more information.")]
+        public string CommonChildDependencyName { get; set; }
 
         public override Operation GetOperation()
         {

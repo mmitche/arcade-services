@@ -287,6 +287,21 @@ namespace Microsoft.DotNet.DarcLib
         }
 
         /// <summary>
+        ///     Apply updates to a target list.
+        ///     Helper method for the coerency updates
+        /// </summary>
+        /// <param name="updates">Updates to apply</param>
+        /// <param name="dependencies">Dependencies to recieve the updates</param>
+        /*private void ApplyUpdatesToList(List<DependencyDetail> dependencies, IEnumerable<DependencyUpdate> updates)
+        {
+            foreach (DependencyUpdate update in updates)
+            {
+                dependencies.Remove(update.From);
+                dependencies.Add(update.To);
+            }
+        }*/
+
+        /// <summary>
         ///     Calculate the leaves of the coherency trees
         /// </summary>
         /// <param name="dependencies">Dependencies to find leaves for.</param>
@@ -334,18 +349,19 @@ namespace Microsoft.DotNet.DarcLib
         }
 
         /// <summary>
-        ///     Get updates required by coherency constraints.
+        ///     Get required updates with coherent parent constraints.
         /// </summary>
-        /// <param name="dependencies">Current set of dependencies.</param>
-        /// <param name="remoteFactory">Remote factory for remote queries.</param>
-        /// <returns>Dependencies with updates.</returns>
-        public async Task<List<DependencyUpdate>> GetRequiredCoherencyUpdatesAsync(
+        /// <param name="dependencies">Existing set of dependencies</param>
+        /// <param name="remoteFactory">Remote factory</param>
+        /// <param name="nodeCache">Cache of nodes built when the graph build happens</param>
+        /// <returns>List of required updates, if any</returns>
+        private async Task<List<DependencyUpdate>> GetRequiredCoherentParentUpdatesAsync(
             IEnumerable<DependencyDetail> dependencies,
-            IRemoteFactory remoteFactory)
+            IRemoteFactory remoteFactory,
+            Dictionary<string, DependencyGraphNode> nodeCache)
         {
             List<DependencyUpdate> toUpdate = new List<DependencyUpdate>();
-            
-            IEnumerable<DependencyDetail> leavesOfCoherencyTrees = 
+            IEnumerable<DependencyDetail> leavesOfCoherencyTrees =
                 CalculateLeavesOfCoherencyTrees(dependencies);
 
             if (!leavesOfCoherencyTrees.Any())
@@ -365,7 +381,6 @@ namespace Microsoft.DotNet.DarcLib
             // a chain (A->B->C). In all cases we need to walk to the head of the chain, keeping track
             // of all elements in the chain. Also note that we are walking all dependencies here, not
             // just those that match the incoming AssetData and aligning all of these based on the coherency data.
-            Dictionary<string, DependencyGraphNode> nodeCache = new Dictionary<string, DependencyGraphNode>();
             HashSet<DependencyDetail> visited = new HashSet<DependencyDetail>();
             foreach (DependencyDetail dependency in leavesOfCoherencyTrees)
             {
@@ -461,6 +476,92 @@ namespace Microsoft.DotNet.DarcLib
                     visited.Add(dependencyInUpdateChain);
                 }
             }
+
+            return toUpdate;
+        }
+
+        /// <summary>
+        ///     Get required updates with common child constraints
+        /// </summary>
+        /// <param name="dependencies">Existing set of dependencies</param>
+        /// <param name="remoteFactory">Remote factory</param>
+        /// <param name="nodeCache">Cache of nodes built when the graph build happens</param>
+        /// <returns>List of required updates, if any</returns>
+        /// <remarks>
+        ///     Algorithm discussion tbd
+        /// </remarks>
+        private async Task<List<DependencyUpdate>> GetRequiredCommonChildUpdatesAsync(
+            IEnumerable<DependencyDetail> dependencies,
+            IRemoteFactory remoteFactory,
+            Dictionary<string, DependencyGraphNode> nodeCache)
+        {
+            List<DependencyUpdate> toUpdate = new List<DependencyUpdate>();
+
+            // Find all nodes with common children designations and bucket them by which
+            // common child they have.
+            IEnumerable<DependencyDetail> withChild = dependencies.Where(d => !string.IsNullOrEmpty(d.CommonChildDependencyName));
+            Dictionary<string, List<DependencyDetail>> commonChildBuckets = new Dictionary<string, List<DependencyDetail>>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (DependencyDetail dependency in withChild)
+            {
+                if (!commonChildBuckets.TryGetValue(dependency.CommonChildDependencyName, out List<DependencyDetail> sameCommonChild))
+                {
+                    sameCommonChild = new List<DependencyDetail>();
+                    commonChildBuckets.Add(dependency.CommonChildDependencyName, sameCommonChild);
+                }
+                sameCommonChild.Add(dependency);
+            }
+
+            // Walk each bucket and run the common child update
+            foreach (KeyValuePair<string, List<DependencyDetail>> bucket in commonChildBuckets)
+            {
+                List<DependencyUpdate> updates = 
+                    await GetRequiredCommonChildUpdatesAsync(dependencies, bucket.Value, remoteFactory, nodeCache);
+            }
+
+            return toUpdate;
+        }
+
+        /// <summary>
+        ///     Run a common child update on a single bucket (dependencies with the same common child)
+        /// </summary>
+        /// <param name="existingDependencies">All dependencies</param>
+        /// <param name="dependenciesToUpdate">Dependencies with the same common child</param>
+        /// <param name="remoteFactory">Remote factory</param>
+        /// <param name="nodeCache">Dependency graph node cache</param>
+        /// <returns>List of updates</returns>
+        private async Task<List<DependencyUpdate>> GetRequiredCommonChildUpdatesAsync(
+            IEnumerable<DependencyDetail> existingDependencies,
+            IEnumerable<DependencyDetail> dependenciesToUpdate,
+            IRemoteFactory remoteFactory,
+            Dictionary<string, DependencyGraphNode> nodeCache)
+        {
+            List<DependencyUpdate> toUpdate = new List<DependencyUpdate>();
+
+            
+            return toUpdate;
+        }
+
+        /// <summary>
+        ///     Get updates required by coherency constraints.
+        /// </summary>
+        /// <param name="dependencies">Current set of dependencies.</param>
+        /// <param name="remoteFactory">Remote factory for remote queries.</param>
+        /// <returns>Dependencies with updates.</returns>
+        public async Task<List<DependencyUpdate>> GetRequiredCoherencyUpdatesAsync(
+            IEnumerable<DependencyDetail> dependencies,
+            IRemoteFactory remoteFactory)
+        {
+            List<DependencyUpdate> toUpdate = new List<DependencyUpdate>();
+            Dictionary<string, DependencyGraphNode> nodeCache = new Dictionary<string, DependencyGraphNode>();
+
+            // Run coherent parent updates first. Coherent parent updates require building graphs
+            // with the build information, while common child does not (for some nodes).  So the cache
+            // from the common child update may not be usable for coherent parents, but the opposite
+            // is always true
+            toUpdate.AddRange(await GetRequiredCoherentParentUpdatesAsync(dependencies, remoteFactory, nodeCache));
+            // Update the dependencies 
+            toUpdate.AddRange(await GetRequiredCommonChildUpdatesAsync(dependencies, remoteFactory, nodeCache));
 
             return toUpdate;
         }

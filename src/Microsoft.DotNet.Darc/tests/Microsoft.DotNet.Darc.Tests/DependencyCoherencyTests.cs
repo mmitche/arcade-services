@@ -454,7 +454,7 @@ namespace Microsoft.DotNet.Darc.Tests
         }
 
         private DependencyDetail AddDependency(List<DependencyDetail> details, string name,
-            string version, string repo, string commit, bool pinned = false, string coherentParent = null)
+            string version, string repo, string commit, bool pinned = false, string coherentParent = null, string commonChild = null)
         {
             DependencyDetail dep = new DependencyDetail
             {
@@ -464,7 +464,8 @@ namespace Microsoft.DotNet.Darc.Tests
                 Commit = commit,
                 Pinned = pinned,
                 Type = DependencyType.Product,
-                CoherentParentDependencyName = coherentParent
+                CoherentParentDependencyName = coherentParent,
+                CommonChildDependencyName = commonChild
             };
             details.Add(dep);
             return dep;
