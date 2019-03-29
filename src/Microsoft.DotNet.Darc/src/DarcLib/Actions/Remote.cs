@@ -438,7 +438,7 @@ namespace Microsoft.DotNet.DarcLib
                 foreach (DependencyDetail dependencyInUpdateChain in updateList)
                 {
                     (Asset coherentAsset, Build buildForAsset) =
-                        FindAssetInBuildTree(dependencyInUpdateChain.Name, rootNode);
+                        FindAssetInDependencyGraph(dependencyInUpdateChain.Name, rootNode);
 
                     if (coherentAsset == null)
                     {
@@ -480,6 +480,15 @@ namespace Microsoft.DotNet.DarcLib
             return toUpdate;
         }
 
+        class PotentialDependencyVersion
+        {
+            string Version;
+            /// <summary>
+            /// Child versions referenced from this parent.
+            /// </summary>
+            List<DependencyDetail> ChildVersions;
+        }
+
         /// <summary>
         ///     Get required updates with common child constraints
         /// </summary>
@@ -488,7 +497,32 @@ namespace Microsoft.DotNet.DarcLib
         /// <param name="nodeCache">Cache of nodes built when the graph build happens</param>
         /// <returns>List of required updates, if any</returns>
         /// <remarks>
-        ///     Algorithm discussion tbd
+        ///     The rule is that any set of dependencies with common children must move to versions
+        ///     that have the same common children versions.
+        ///     
+        ///     This algorithm is not particulary complicated:
+        ///     1. For each common child dependency name:
+        ///         a. Find the child dependency underneath the parent dependency with the attribute.
+        ///         b. Evaluate the set of possibility child dependency versions and corresponding 
+        ///            parent dependency versions.
+        ///     2. Successively evaluate each distinct pair of parent dependencies with common child attributes,
+        ///        intersecting the sets of child dependencies.
+        ///     3. Choose the latest parent dependency in each set.
+        ///     
+        ///     The problem with this algorithm is that it is expensive. Evaluating the set of possible
+        ///     child and parent dependency versions requires remote calls to GitHub/AzDO/BAR.
+        ///     
+        ///     Options for constraining algorithm:
+        ///     - Only allow distinct, non-overlapping sets. There may be 3 dependencies with "A,C" common children",
+        ///       and 2 dependencies with "D" common children, but all dependencies mentioning an A or C common child must 
+        ///       be have A,C common children.
+        ///     - Constrain the search space. One difficulty here is that if the common child dependency cannot be satisfied
+        ///       with a relatively recent build, the search space could be expanded to be more exhaustive. However, if
+        ///       it cannot be satisfied at all, then search space becomes the set of all builds (of channel/repo) which is
+        ///       undesirable.
+        ///     - If the common children of a dependency cannot be found in the dependency graph at that point, we can
+        ///       error out at that point.  Technically, this is not correct. Moving forwards or backwards in builds
+        ///       yields a different dependency graph, so the children may exist in an older graph.
         /// </remarks>
         private async Task<List<DependencyUpdate>> GetRequiredCommonChildUpdatesAsync(
             IEnumerable<DependencyDetail> dependencies,
@@ -497,48 +531,54 @@ namespace Microsoft.DotNet.DarcLib
         {
             List<DependencyUpdate> toUpdate = new List<DependencyUpdate>();
 
-            // Find all nodes with common children designations and bucket them by which
-            // common child they have.
-            IEnumerable<DependencyDetail> withChild = dependencies.Where(d => !string.IsNullOrEmpty(d.CommonChildDependencyName));
-            Dictionary<string, List<DependencyDetail>> commonChildBuckets = new Dictionary<string, List<DependencyDetail>>(StringComparer.OrdinalIgnoreCase);
-
-            foreach (DependencyDetail dependency in withChild)
+            DependencyGraphBuildOptions dependencyGraphBuildOptions = new DependencyGraphBuildOptions
             {
-                if (!commonChildBuckets.TryGetValue(dependency.CommonChildDependencyName, out List<DependencyDetail> sameCommonChild))
+                IncludeToolset = true,
+                LookupBuilds = false, // No need to lookup any builds
+                NodeDiff = NodeDiff.None // No need for diff
+            };
+
+            // Find all nodes with common children designations.
+            IEnumerable<DependencyDetail> withCommonChildren = dependencies
+                .Where(d => d.CommonChildDependencyNames != null && d.CommonChildDependencyNames.Count > 0);
+
+            Dictionary<DependencyDetail, List<PotentialDependencyVersion>> potentialDependencyVersions =
+                new Dictionary<DependencyDetail, List<PotentialDependencyVersion>>();
+
+            // For each dependency, start building up the potential sets.
+            bool constraintsSatisfied = false;
+            while (true)
+            {
+                foreach (DependencyDetail dependency in withCommonChildren)
                 {
-                    sameCommonChild = new List<DependencyDetail>();
-                    commonChildBuckets.Add(dependency.CommonChildDependencyName, sameCommonChild);
+                    // Start building the set of possible versions of this dependency and
+                    // what the corresponding common children dependencies are:
+                    if (!nodeCache.TryGetValue($"{dependency.RepoUri}@{dependency.Commit}", out DependencyGraphNode existingNode))
+                    {
+                        dependencyGraphBuildOptions.StopBuildAfter =
+                            new List<string>(dependency.CommonChildDependencyNames);
+
+                        // Build up the dependency graph starting here.  T
+                        DependencyGraph dependencyGraph =
+                            await DependencyGraph.BuildRemoteDependencyGraphAsync(remoteFactory,
+                                null, dependency.RepoUri, dependency.Commit,
+                                dependencyGraphBuildOptions, _logger);
+                        // Start at root.
+                        existingNode = dependencyGraph.Root;
+
+                        // Note that we do not add the graph nodes to the cache here.
+                        // Because the graph build is stopped after the dependencies we are searching for
+                        // are found, reusing this node to find other dependencies is incorrect.
+                    }
+
+                    // Now find each common child in the tree, and add those versions to the potential
+                    // dependency versions for this parent.
+                    foreach (string commonChild in dependency.CommonChildDependencyNames) {
+                        FindAssetInBuildTree
+                    }
                 }
-                sameCommonChild.Add(dependency);
             }
 
-            // Walk each bucket and run the common child update
-            foreach (KeyValuePair<string, List<DependencyDetail>> bucket in commonChildBuckets)
-            {
-                List<DependencyUpdate> updates = 
-                    await GetRequiredCommonChildUpdatesAsync(dependencies, bucket.Value, remoteFactory, nodeCache);
-            }
-
-            return toUpdate;
-        }
-
-        /// <summary>
-        ///     Run a common child update on a single bucket (dependencies with the same common child)
-        /// </summary>
-        /// <param name="existingDependencies">All dependencies</param>
-        /// <param name="dependenciesToUpdate">Dependencies with the same common child</param>
-        /// <param name="remoteFactory">Remote factory</param>
-        /// <param name="nodeCache">Dependency graph node cache</param>
-        /// <returns>List of updates</returns>
-        private async Task<List<DependencyUpdate>> GetRequiredCommonChildUpdatesAsync(
-            IEnumerable<DependencyDetail> existingDependencies,
-            IEnumerable<DependencyDetail> dependenciesToUpdate,
-            IRemoteFactory remoteFactory,
-            Dictionary<string, DependencyGraphNode> nodeCache)
-        {
-            List<DependencyUpdate> toUpdate = new List<DependencyUpdate>();
-
-            
             return toUpdate;
         }
 
@@ -567,13 +607,68 @@ namespace Microsoft.DotNet.DarcLib
         }
 
         /// <summary>
+        ///     Find a dependency in the dependency graph with the shorted path to the
+        ///     root node.
+        /// </summary>
+        /// <param name="dependencyName">Name of dependency</param>
+        /// <param name="currentNode">Root node to start search at</param>
+        /// <returns>Dependency</returns>
+        /// <remarks>
+        ///     This is somewhat different than finding the asset in the graph
+        ///     in that this looks only through the direct dependencies rather than
+        ///     ancillary build information.
+        /// </remarks>
+        private DependencyDetail FindDependencyInGraph(string dependencyName, DependencyGraphNode currentNode)
+        {
+            (DependencyDetail dependency, int depth) = FindDependencyInGraph(dependencyName, currentNode, 0);
+            return dependency;
+        }
+
+        /// <summary>
+        ///     Find a dependency in the dependency graph with the shorted path to the
+        ///     root node.
+        /// </summary>
+        /// <param name="dependencyName"></param>
+        /// <param name="currentNode"></param>
+        /// <param name="currentDepth"></param>
+        /// <returns></returns>
+        private (DependencyDetail dependency, int dependencyDepth) FindDependencyInGraph(
+            string dependencyName, DependencyGraphNode currentNode, int currentDepth)
+        {
+            DependencyDetail dependencyAtNode = currentNode.Dependencies.FirstOrDefault(
+                d => d.Name.Equals(dependencyName, StringComparison.OrdinalIgnoreCase));
+
+            if (dependencyAtNode != null)
+            {
+                return (dependencyAtNode, currentDepth);
+            }
+
+            DependencyDetail shallowestDependency = null;
+            int shallowestDependencyDepth = int.MaxValue;
+            foreach (DependencyGraphNode childNode in currentNode.Children)
+            {
+                (DependencyDetail dependency, int dependencyDepth) =
+                    FindDependencyInGraph(dependencyName, currentNode, currentDepth + 1);
+                if (dependency != null)
+                {
+                    if (dependencyDepth < shallowestDependencyDepth)
+                    {
+                        shallowestDependency = dependency;
+                        shallowestDependencyDepth = dependencyDepth;
+                    }
+                }
+            }
+            return (shallowestDependency, shallowestDependencyDepth);
+        }
+
+        /// <summary>
         ///     Given an asset name, find the asset in the dependency tree.
         ///     Returns the asset with the shortest path to the root node.
         /// </summary>
         /// <param name="assetName">Name of asset.</param>
         /// <param name="currentNode">Dependency graph node to find the asset in.</param>
         /// <returns>(Asset, Build, depth), or (null, null, maxint) if not found.</returns>
-        private (Asset asset, Build build, int buildDepth) FindAssetInBuildTree(string assetName, DependencyGraphNode currentNode, int currentDepth)
+        private (Asset asset, Build build, int nodeDepth) FindAssetInDependencyGraph(string assetName, DependencyGraphNode currentNode, int currentDepth)
         {
             foreach (Build build in currentNode.ContributingBuilds)
             {
@@ -590,7 +685,7 @@ namespace Microsoft.DotNet.DarcLib
             int shallowestBuildDepth = int.MaxValue;
             foreach (DependencyGraphNode childNode in currentNode.Children)
             {
-                (Asset asset, Build build, int buildDepth) = FindAssetInBuildTree(assetName, childNode, currentDepth++);
+                (Asset asset, Build build, int buildDepth) = FindAssetInDependencyGraph(assetName, childNode, currentDepth + 1);
                 if (asset != null)
                 {
                     if (buildDepth < shallowestBuildDepth)
@@ -611,9 +706,9 @@ namespace Microsoft.DotNet.DarcLib
         /// <param name="assetName">Name of asset.</param>
         /// <param name="currentNode">Dependency graph node to find the asset in.</param>
         /// <returns>(Asset, Build), or (null, null) if not found.</returns>
-        private (Asset asset, Build build) FindAssetInBuildTree(string assetName, DependencyGraphNode currentNode)
+        private (Asset asset, Build build) FindAssetInDependencyGraph(string assetName, DependencyGraphNode currentNode)
         {
-            (Asset asset, Build build, int depth) = FindAssetInBuildTree(assetName, currentNode, 0);
+            (Asset asset, Build build, int depth) = FindAssetInDependencyGraph(assetName, currentNode, 0);
             return (asset, build);
         }
 
