@@ -48,6 +48,11 @@ namespace Microsoft.DotNet.DarcLib
         /// Type of node diff to perform. Local build only supports 'None' 
         /// </summary>
         public NodeDiff NodeDiff { get; set; } = NodeDiff.None;
+        /// <summary>
+        /// Stop the graph build when all the dependencies in the list
+        /// have been found. The evaluation order is breadth first.
+        /// </summary>
+        public List<string> StopBuildAfter { get; set; }
     }
 
     public class DependencyGraph
@@ -458,14 +463,23 @@ namespace Microsoft.DotNet.DarcLib
             // Create the root node and add the repo to the visited bit vector.
             DependencyGraphNode rootGraphNode = new DependencyGraphNode(repoUri, commit, rootDependencies, rootNodeBuilds);
             rootGraphNode.VisitedNodes.Add(repoUri);
-            Stack<DependencyGraphNode> nodesToVisit = new Stack<DependencyGraphNode>();
-            nodesToVisit.Push(rootGraphNode);
+            // Nodes to visit is a queue, so that the evaluation order
+            // of the graph is breadth first.
+            Queue<DependencyGraphNode> nodesToVisit = new Queue<DependencyGraphNode>();
+            nodesToVisit.Enqueue(rootGraphNode);
             HashSet<DependencyDetail> uniqueDependencyDetails;
+            HashSet<string> breakOn = null;
+            if (options.StopBuildAfter != null)
+            {
+                breakOn = new HashSet<string>(options.StopBuildAfter, StringComparer.OrdinalIgnoreCase);
+            }
+
             if (rootGraphNode.Dependencies != null)
             {
                 uniqueDependencyDetails = new HashSet<DependencyDetail>(
                     rootGraphNode.Dependencies,
                     new DependencyDetailComparer());
+                rootGraphNode.Dependencies.Select(d => breakOn.Add(d.Name));
             }
             else
             {
@@ -487,7 +501,7 @@ namespace Microsoft.DotNet.DarcLib
 
             while (nodesToVisit.Count > 0)
             {
-                DependencyGraphNode node = nodesToVisit.Pop();
+                DependencyGraphNode node = nodesToVisit.Dequeue();
 
                 logger.LogInformation($"Visiting {node.RepoUri}@{node.Commit}");
 
@@ -618,7 +632,7 @@ namespace Microsoft.DotNet.DarcLib
                             nodeContributingBuilds);
                         // Cache the dependency and add it to the visitation stack.
                         nodeCache.Add($"{dependency.RepoUri}@{dependency.Commit}", newNode);
-                        nodesToVisit.Push(newNode);
+                        nodesToVisit.Enqueue(newNode);
                         newNode.VisitedNodes.Add(dependency.RepoUri);
                         node.AddChild(newNode, dependency);
                         // Calculate incoherencies. If we've not yet visited the repo uri, add the
@@ -632,6 +646,18 @@ namespace Microsoft.DotNet.DarcLib
                         else
                         {
                             visitedRepoUriNodes.Add(newNode.RepoUri, newNode);
+                        }
+
+                        // If the list of dependencies to break on is non-null and this dependency is in it,
+                        // then remove it from the list. If it's the last element in the list, clear the
+                        // nodes we need to visit
+                        if (breakOn != null)
+                        {
+                            if (breakOn.Remove(dependency.Name) && breakOn.Count == 0)
+                            {
+                                logger.LogInformation($"Node {dependency.RepoUri}@{dependency.Commit} has already been created, adding as child");
+                                nodesToVisit.Clear();
+                            }
                         }
                     }
                 }
