@@ -16,9 +16,19 @@ namespace Microsoft.DotNet.DarcLib
     /// </summary>
     public class DependencyFlowGraph
     {
+        public DependencyFlowGraph(List<DependencyFlowNode> nodes, List<DependencyFlowEdge> edges)
+        {
+            Nodes = nodes;
+            Edges = edges;
+        }
+
+        public List<DependencyFlowNode> Nodes { get; set; }
+        public List<DependencyFlowEdge> Edges { get; set; }
+
         public static async Task<DependencyFlowGraph> BuildAsync(
             IRemoteFactory remoteFactory,
-            ILogger logger)
+            ILogger logger,
+            List<DefaultChannel> additionalDefaults = null)
         {
             var remote = await remoteFactory.GetBarOnlyRemoteAsync(logger);
             // Get all default channels and all subscriptions to begin the graph build
@@ -26,25 +36,49 @@ namespace Microsoft.DotNet.DarcLib
             List<DefaultChannel> defaultChannels = (await remote.GetDefaultChannelsAsync()).ToList();
             List<Subscription> subscriptions = (await remote.GetSubscriptionsAsync()).ToList();
 
-            // Create a visitation stack and push all subscritions onto it.
-            // We will visit all subscriptions, which represent edges in the flow graph
-            Stack<Subscription> toVisit = new Stack<Subscription>(subscriptions);
-            // Create a BV of visited subscriptions
-            HashSet<string> visitedSubscriptions = new HashSet<string>();
+            // If there are more additional defaults, add them in
+            if (additionalDefaults != null)
+            {
+                defaultChannels.AddRange(additionalDefaults);
+            }
 
             // Dictionary of nodes. Key is the repo+branch
             Dictionary<string, DependencyFlowNode> nodes = new Dictionary<string, DependencyFlowNode>(
                 StringComparer.OrdinalIgnoreCase);
+            List<DependencyFlowEdge> edges = new List<DependencyFlowEdge>();
 
-            while (toVisit.Any())
+            // First create all the channel nodes. There may be disconnected
+            // nodes in the graph, so we must process all channels and all subscriptions
+            foreach (DefaultChannel channel in defaultChannels)
             {
-                Subscription currentSubscription = toVisit.Pop();
-
-                // Get a node for the target of this subscription
-                var flowNode = GetOrCreateNode(currentSubscription.TargetRepository, currentSubscription.TargetBranch, nodes);
-
-                
+                DependencyFlowNode flowNode = GetOrCreateNode(channel.Repository, channel.Branch, nodes);
+                // Add a the output mapping.
+                flowNode.OutputChannels.Add(channel.Channel.Name);
             }
+
+            // Process all subscriptions (edges)
+            foreach (Subscription subscription in subscriptions)
+            {
+                // Get the target of the subscription
+                DependencyFlowNode destinationNode = GetOrCreateNode(subscription.TargetRepository, subscription.TargetBranch, nodes);
+                // Add the input channel for the node
+                destinationNode.InputChannels.Add(subscription.Channel.Name);
+                // Translate the input channel + repo to a default channel,
+                // and if one is found, an input node.
+                IEnumerable<DefaultChannel> inputDefaultChannels = defaultChannels.Where(d => d.Channel.Name == subscription.Channel.Name &&
+                                                               d.Repository.Equals(subscription.SourceRepository, StringComparison.OrdinalIgnoreCase));
+                foreach (DefaultChannel defaultChannel in inputDefaultChannels)
+                {
+                    DependencyFlowNode sourceNode = GetOrCreateNode(defaultChannel.Repository, defaultChannel.Branch, nodes);
+
+                    DependencyFlowEdge newEdge = new DependencyFlowEdge(sourceNode, destinationNode, subscription);
+                    destinationNode.IncomingEdges.Add(newEdge);
+                    sourceNode.OutgoingEdges.Add(newEdge);
+                    edges.Add(newEdge);
+                }
+            }
+
+            return new DependencyFlowGraph(nodes.Select(kv => kv.Value).ToList(), edges);
         }
 
         private static string NormalizeBranch(string branch)
@@ -60,8 +94,6 @@ namespace Microsoft.DotNet.DarcLib
 
             return normalizedBranch;
         }
-
-
 
         private static DependencyFlowNode GetOrCreateNode(
             string repo,

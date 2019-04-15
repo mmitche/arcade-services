@@ -55,12 +55,14 @@ namespace Microsoft.DotNet.Darc.Operations
             Channel matchingChannel = matchingChannels.Single();
 
             await GetOverallHealth(matchingChannel, _options.Channel);
+
+            return Constants.ErrorCode;
         }
 
         public async Task GetOverallHealth(Channel channel, string repo)
         {
             Console.WriteLine("Overall Health Alerts");
-            var convergenceHealth = await GetConvergenceHealth();
+            var convergenceHealth = await GetConvergenceHealth(channel, repo);
         }
 
         /// <summary>
@@ -73,9 +75,11 @@ namespace Microsoft.DotNet.Darc.Operations
         {
             IRemote barOnlyRemote = RemoteFactory.GetBarOnlyRemote(_options, Logger);
             // Retrive all subscriptions.
-            var subscriptions = barOnlyRemote.GetSubscriptionsAsync();
+            var subscriptions = await barOnlyRemote.GetSubscriptionsAsync();
             // Retrieve all default channels
-            var defaultChannels = barOnlyRemote.GetDefaultChannelsAsync();
+            var defaultChannels = await barOnlyRemote.GetDefaultChannelsAsync();
+
+            return null;
         }
     }
 }

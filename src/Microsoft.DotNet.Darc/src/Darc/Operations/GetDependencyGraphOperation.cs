@@ -204,7 +204,7 @@ namespace Microsoft.DotNet.Darc.Operations
         /// </example>
         private async Task LogBasicNodeDetails(StreamWriter writer, DependencyGraphNode node, string indent)
         {
-            await writer.WriteLineAsync($"{indent}- Repo:     {node.RepoUri}");
+            await writer.WriteLineAsync($"{indent}- Repo:     {node.Repository}");
             await writer.WriteLineAsync($"{indent}  Commit:   {node.Commit}");
 
             StringBuilder deltaString = new StringBuilder($"{indent}  Delta:    ");
@@ -335,7 +335,7 @@ namespace Microsoft.DotNet.Darc.Operations
 
         private string CalculateGraphVizNodeName(DependencyGraphNode node)
         {
-            return GetSimpleRepoName(node.RepoUri)
+            return GetSimpleRepoName(node.Repository)
                 .Replace(".", "")
                 .Replace("-", "") + node.Commit;
         }
@@ -372,7 +372,7 @@ namespace Microsoft.DotNet.Darc.Operations
                     nodeBuilder.Append("[label=\"");
                     
                     // Append friendly repo name
-                    nodeBuilder.Append(GetSimpleRepoName(node.RepoUri));
+                    nodeBuilder.Append(GetSimpleRepoName(node.Repository));
                     nodeBuilder.Append(@"\n");
                     
                     // Append short commit sha

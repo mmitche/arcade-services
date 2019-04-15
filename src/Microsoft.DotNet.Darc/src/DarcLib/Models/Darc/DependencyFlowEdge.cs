@@ -8,12 +8,16 @@ namespace Microsoft.DotNet.DarcLib
 {
     public class DependencyFlowEdge
     {
-        public DependencyFlowEdge(Subscription subscription)
+        public DependencyFlowEdge(DependencyFlowNode from, DependencyFlowNode to, Subscription subscription)
         {
             Subscription = subscription;
+            From = from;
+            To = to;
         }
 
         // An edge is associated with a subscription
         public readonly Subscription Subscription;
+        public readonly DependencyFlowNode From;
+        public readonly DependencyFlowNode To;
     }
 }
