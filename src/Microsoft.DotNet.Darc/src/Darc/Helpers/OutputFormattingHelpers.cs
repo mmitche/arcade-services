@@ -54,7 +54,8 @@ namespace Microsoft.DotNet.Darc
         {
             return name.Replace(".", "")
                        .Replace("-", "")
-                       .Replace("/", "");
+                       .Replace("/", "")
+                       .Replace(" ", "");
         }
 
         /// <summary>

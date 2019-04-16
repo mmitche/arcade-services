@@ -25,6 +25,41 @@ namespace Microsoft.DotNet.DarcLib
         public List<DependencyFlowNode> Nodes { get; set; }
         public List<DependencyFlowEdge> Edges { get; set; }
 
+        public void RemoveNode(DependencyFlowNode node)
+        {
+            // Remove the node from the list, then remove corresponding edges
+            if (Nodes.Remove(node))
+            {
+                foreach (DependencyFlowEdge incomingEdge in node.IncomingEdges)
+                {
+                    // Don't use RemoveEdge as it assumes that this node will remain in the graph and
+                    // will cause modification of this IncomingEdges collection while iterating
+                    incomingEdge.From.OutgoingEdges.Remove(incomingEdge);
+                }
+                foreach (DependencyFlowEdge outgoingEdge in node.OutgoingEdges)
+                {
+                    // Don't use RemoveEdge as it assumes that this node will remain in the graph and
+                    // will cause modification of this OutgoingEdges collection while iterating
+                    DependencyFlowNode targetNode = outgoingEdge.To;
+                    outgoingEdge.To.IncomingEdges.Remove(outgoingEdge);
+                    // Recalculate the input channels
+                    targetNode.InputChannels = new HashSet<string>(targetNode.IncomingEdges.Select(e => e.Subscription.Channel.Name));
+                }
+            }
+        }
+
+        public void RemoveEdge(DependencyFlowEdge edge)
+        {
+            if (Edges.Remove(edge))
+            {
+                edge.From.OutgoingEdges.Remove(edge);
+                DependencyFlowNode targetNode = edge.To;
+                edge.To.IncomingEdges.Remove(edge);
+                // Recalculate the input channels
+                targetNode.InputChannels = new HashSet<string>(targetNode.IncomingEdges.Select(e => e.Subscription.Channel.Name));
+            }
+        }
+
         public static async Task<DependencyFlowGraph> BuildAsync(
             IRemoteFactory remoteFactory,
             ILogger logger,

@@ -32,16 +32,15 @@ namespace Microsoft.DotNet.Darc.Operations
             try
             {
                 RemoteFactory remoteFactory = new RemoteFactory(_options);
-                const string arcadeValidation = @"https://github.com/dotnet/arcade-validation";
+                var barOnlyRemote = await remoteFactory.GetBarOnlyRemoteAsync(Logger);
+                Channel arcadeLatestChannel = await barOnlyRemote.GetChannelAsync(".NET Tools - Latest");
                 // Add one default for arcade-validation to .NET Tools - Latest
                 List<DefaultChannel> additionalDefaults = new List<DefaultChannel>
                 {
-                    new DefaultChannel(0, arcadeValidation)
+                    new DefaultChannel(0, "https://github.com/dotnet/arcade")
                     {
                         Branch = "refs/heads/master",
-                        Channel = new Channel(0, ".NET Tools - Latest", "tools", null),
-                        Repository = arcadeValidation,
-                        Id = 0
+                        Channel = arcadeLatestChannel
                     }
                 };
 
@@ -61,6 +60,73 @@ namespace Microsoft.DotNet.Darc.Operations
             }
         }
 
+        private void FilterGraph(DependencyFlowGraph graph)
+        {
+            if (string.IsNullOrEmpty(_options.Channel))
+            {
+                return;
+            }
+
+            HashSet<DependencyFlowNode> unreachableNodes = new HashSet<DependencyFlowNode>(graph.Nodes);
+            HashSet<DependencyFlowEdge> unreachableEdges = new HashSet<DependencyFlowEdge>(graph.Edges);
+            Stack<DependencyFlowNode> nodes = new Stack<DependencyFlowNode>();
+
+            // Start with initial set of nodes with outputs to the target channel.
+            IEnumerable<DependencyFlowNode> nodesOnChannel = graph.Nodes.Where(
+                n => n.OutputChannels.Any(c => c.Contains(_options.Channel, StringComparison.OrdinalIgnoreCase)));
+
+            // Walk each root
+            foreach (DependencyFlowNode rootNodes in graph.Nodes)
+            {
+                if (!rootNodes.OutputChannels.Any(c => c.Contains(_options.Channel, StringComparison.OrdinalIgnoreCase)))
+                {
+                    continue;
+                }
+
+                nodes.Push(rootNodes);
+
+                while (nodes.TryPop(out DependencyFlowNode currentNode))
+                {
+                    if (!unreachableNodes.Contains(currentNode))
+                    {
+                        // Nothing to do
+                        continue;
+                    }
+                    unreachableNodes.Remove(currentNode);
+                    foreach (var inputEdge in currentNode.IncomingEdges)
+                    {
+                        if (IsInterestingEdge(inputEdge))
+                        {
+                            unreachableEdges.Remove(inputEdge);
+                        }
+                        // Push the inputs onto the stack.
+                        nodes.Push(inputEdge.From);
+                    }
+                }
+            }
+
+            // Now walk the graph and eliminate any edges or nodes that
+            foreach (var node in unreachableNodes)
+            {
+                graph.RemoveNode(node);
+            }
+
+            foreach (var edge in unreachableEdges)
+            {
+                graph.RemoveEdge(edge);
+            }
+        }
+
+        private bool IsInterestingEdge(DependencyFlowEdge edge)
+        {
+            if (!_options.IncludeDisabledEdges &&
+                (!edge.Subscription.Enabled || edge.Subscription.Policy.UpdateFrequency == SubscriptionPolicyUpdateFrequency.None))
+            {
+                return false;
+            }
+            return true;
+        }
+
         /// <summary>
         ///     Log the graph in graphviz (dot) format.
         /// </summary>
@@ -78,6 +144,7 @@ namespace Microsoft.DotNet.Darc.Operations
         /// <returns>Async task</returns>
         private async Task LogGraphViz(DependencyFlowGraph graph)
         {
+            FilterGraph(graph);
             using (StreamWriter writer = OutputFormattingHelpers.GetOutputFileStreamOrConsole(_options.GraphVizOutputFile))
             {
                 await writer.WriteLineAsync("digraph repositoryGraph {");
@@ -119,12 +186,6 @@ namespace Microsoft.DotNet.Darc.Operations
                 // Now write all the edges
                 foreach (DependencyFlowEdge edge in graph.Edges)
                 {
-                    if (!_options.IncludeDisabledEdges &&
-                        (!edge.Subscription.Enabled || edge.Subscription.Policy.UpdateFrequency == SubscriptionPolicyUpdateFrequency.None))
-                    {
-                        continue;
-                    }
-
                     // Check channel of sub.
                     if (!string.IsNullOrEmpty(_options.Channel) &&
                         !edge.Subscription.Channel.Name.Contains(_options.Channel, StringComparison.OrdinalIgnoreCase) )
@@ -135,7 +196,7 @@ namespace Microsoft.DotNet.Darc.Operations
                     string fromNode = OutputFormattingHelpers.CalculateGraphVizNodeName(edge.From);
                     string toNode = OutputFormattingHelpers.CalculateGraphVizNodeName(edge.To);
                     string label = $"{edge.Subscription.Channel.Name} ({edge.Subscription.Policy.UpdateFrequency})";
-                    await writer.WriteLineAsync($"    {fromNode} -> {toNode} [ label=\"{label}\" ]");
+                    await writer.WriteLineAsync($"    {fromNode} -> {toNode}");
                 }
 
                 await writer.WriteLineAsync("}");
