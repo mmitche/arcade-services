@@ -880,13 +880,19 @@ namespace Microsoft.DotNet.Darc.Operations
 
                 bool skipExisting = true;
                 // Web client will overwrite, so avoid this if not desired by checking for file existence.
-                if (!_options.Overwrite && File.Exists(targetFile))
+                /*if (!_options.Overwrite && File.Exists(targetFile))
                 {
                     if (skipExisting)
                     {
                         return true;
                     }
                     errors.Add($"Failed to write {targetFile}. The file already exists.");
+                    return false;
+                }*/
+
+                System.IO.File.Delete(targetFile);
+                if (!System.IO.File.Exists(sourceFile))
+                {
                     return false;
                 }
 
