@@ -601,14 +601,13 @@ namespace Microsoft.DotNet.Darc.Operations
 
                 // Walk the locations and attempt to gather the asset at each one, setting the output
                 // path based on the type. Note that if there are multiple locations and their types don't
-                // match, consider this an error.
-                AssetLocationType locationType = assetLocations[0].Type;
+                // match, consider this an error.   
                 foreach (AssetLocation location in assetLocations)
                 {
-                    if (locationType != location.Type)
+                    AssetLocationType locationType = location.Type;
+                    if (asset.Name.Contains("symbols.nupkg"))
                     {
-                        errors.Add($"Asset '{assetNameAndVersion}' has inconsistent location types ({locationType} vs. {location.Type})");
-                        break;
+                        locationType = AssetLocationType.Container;
                     }
 
                     switch (locationType)
@@ -620,7 +619,7 @@ namespace Microsoft.DotNet.Darc.Operations
                             downloadedAsset = await DownloadBlobAsync(client, build, asset, location, subPath, errors);
                             break;
                         default:
-                            errors.Add($"Unexpected location type {locationType}");
+                            errors.Add($"Unexpected location type {location.Type}");
                             break;
                     }
 
@@ -842,7 +841,7 @@ namespace Microsoft.DotNet.Darc.Operations
                     };
                     foreach (string shareDir in shareDirs)
                     {
-                        string potentialPath = $@"\\aspnetci\drops\AspNetCore-ci-official\3.0-preview4\{build.AzureDevOpsBuildNumber}\{shareDir}\Release\{shippingNonShippingFolder}\{symbolPackageName}";
+                        string potentialPath = $@"\\aspnetci\drops\AspNetCore-ci-official\3.0-preview5\{build.AzureDevOpsBuildNumber}\{shareDir}\Release\{shippingNonShippingFolder}\{symbolPackageName}";
                         if (await DownloadFromShareAsync(potentialPath, fullTargetPath, errors))
                         {
                             downloadedAsset.Successful = true;
@@ -875,24 +874,23 @@ namespace Microsoft.DotNet.Darc.Operations
 
             try
             {
+                if (!System.IO.File.Exists(sourceFile))
+                {
+                    return false;
+                }
+
                 string directory = Path.GetDirectoryName(targetFile);
                 Directory.CreateDirectory(directory);
 
                 bool skipExisting = true;
                 // Web client will overwrite, so avoid this if not desired by checking for file existence.
-                /*if (!_options.Overwrite && File.Exists(targetFile))
+                if (!_options.Overwrite && File.Exists(targetFile))
                 {
                     if (skipExisting)
                     {
                         return true;
                     }
                     errors.Add($"Failed to write {targetFile}. The file already exists.");
-                    return false;
-                }*/
-
-                System.IO.File.Delete(targetFile);
-                if (!System.IO.File.Exists(sourceFile))
-                {
                     return false;
                 }
 
