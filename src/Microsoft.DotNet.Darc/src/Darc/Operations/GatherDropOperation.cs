@@ -32,7 +32,14 @@ namespace Microsoft.DotNet.Darc.Operations
         public Build Build { get; set; }
         public bool Successful { get; set; }
         public IEnumerable<DownloadedAsset> DownloadedAssets { get; set; }
+        /// <summary>
+        ///     Root output directory for this build.
+        /// </summary>
         public string OutputDirectory { get; set; }
+        /// <summary>
+        ///     True if the output has any shipping assets.
+        /// </summary>
+        public bool AnyShippingAssets { get; set; }
     }
 
     internal class InputBuilds
@@ -317,11 +324,12 @@ namespace Microsoft.DotNet.Darc.Operations
         /// <returns>File share location</returns>
         public string GetFileShareLocationForReleaseJson(DownloadedBuild build)
         {
-            return build.OutputDirectory;
+            // We only want to have shipping assets in the release json, so append that path
+            return Path.Combine(build.OutputDirectory, shippingSubPath);
         }
 
         /// <summary>
-        ///     Write the release json.  Only applicable for separated drops
+        ///     Write the release json.  Only applicable for separated (ReleaseLayout) drops
         /// </summary>
         /// <param name="downloadedBuilds">List of downloaded builds</param>
         /// <param name="outputDirectory">Output directory write the release json</param>
@@ -343,7 +351,8 @@ namespace Microsoft.DotNet.Darc.Operations
                     release = _options.ReleaseName,
                     products = new[]
                     {
-                        downloadedBuilds.Select(b =>
+                        downloadedBuilds.Where(b => b.AnyShippingAssets)
+                        .Select(b =>
                         {
                             return new
                             {
@@ -562,6 +571,7 @@ namespace Microsoft.DotNet.Darc.Operations
             }
 
             List<DownloadedAsset> downloadedAssets = new List<DownloadedAsset>();
+            bool anyShipping = false;
 
             Console.WriteLine($"Gathering drop for build {build.AzureDevOpsBuildNumber} of {repoUri}");
             using (HttpClient client = new HttpClient())
@@ -585,6 +595,7 @@ namespace Microsoft.DotNet.Darc.Operations
                     }
                     else
                     {
+                        anyShipping |= !asset.NonShipping;
                         downloadedAssets.Add(downloadedAsset);
                     }
                 }
@@ -595,7 +606,8 @@ namespace Microsoft.DotNet.Darc.Operations
                 Successful = success,
                 Build = build,
                 DownloadedAssets = downloadedAssets,
-                OutputDirectory = outputDirectory
+                OutputDirectory = outputDirectory,
+                AnyShippingAssets = anyShipping
             };
 
             // If separated drop, generate a manifest per build
