@@ -298,7 +298,7 @@ namespace Microsoft.DotNet.Darc.Operations
         /// <returns>Product name</returns>
         private string GetProductNameForReleaseJson(DownloadedBuild build)
         {
-            // Preference the github repo name over te 
+            // Preference the github repo name over the azure devops repo name.
             if (!string.IsNullOrEmpty(build.Build.GitHubRepository))
             {
                 // Split off the github.com+org name and just use the repo name, all lower case.
@@ -388,7 +388,7 @@ namespace Microsoft.DotNet.Darc.Operations
                 await writer.WriteLineAsync($"Builds:");
                 foreach (DownloadedBuild build in downloadedBuilds)
                 {
-                    await writer.WriteLineAsync($"  - Repo:         {build.Build.AzureDevOpsRepository}");
+                    await writer.WriteLineAsync($"  - Repo:         {build.Build.GitHubRepository ?? build.Build.AzureDevOpsRepository}");
                     await writer.WriteLineAsync($"    Commit:       {build.Build.Commit}");
                     await writer.WriteLineAsync($"    Branch:       {build.Build.AzureDevOpsBranch}");
                     await writer.WriteLineAsync($"    Produced:     {build.Build.DateProduced}");
