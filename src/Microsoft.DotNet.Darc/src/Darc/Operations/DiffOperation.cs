@@ -36,7 +36,7 @@ namespace Microsoft.DotNet.Darc.Operations
     ///     these scenarios.
     ///     - Added/removed nodes - Note the added or removed node, but do not show the full diff
     ///       of the added or removed node.
-    ///     - Incoherency - Maybe note which subtrees are becoming coherent?
+    ///     - Incoherency - Maybe note which subtrees are becoming coherent or incoherent?
     /// </summary>
     internal class DiffOperation : Operation
     {
