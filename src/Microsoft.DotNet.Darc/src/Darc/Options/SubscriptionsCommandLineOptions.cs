@@ -46,6 +46,19 @@ namespace Microsoft.DotNet.Darc.Options
         [Option("ids", Separator = ',', HelpText = "Get only only subscriptions with these ids.")]
         public IEnumerable<string> SubscriptionIds { get; set; }
 
+        public bool HasAtLeastOneFilter()
+        {
+            return !string.IsNullOrEmpty(TargetRepository) ||
+                   !string.IsNullOrEmpty(SourceRepository) ||
+                   !string.IsNullOrEmpty(Channel) ||
+                   !string.IsNullOrEmpty(TargetBranch) ||
+                   Disabled ||
+                   Enabled ||
+                   Batchable ||
+                   NotBatchable ||
+                   SubscriptionIds.Any();
+        }
+
         public bool SubcriptionFilter(Subscription subscription)
         {
             return (SubscriptionParameterMatches(TargetRepository, subscription.TargetRepository) &&

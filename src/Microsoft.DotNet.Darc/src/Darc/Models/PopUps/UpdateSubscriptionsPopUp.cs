@@ -15,7 +15,7 @@ using YamlDotNet.Serialization;
 
 namespace Microsoft.DotNet.Darc.Models.PopUps
 {
-    public class UpdateSubscriptionPopUp : EditorPopUp
+    public class UpdateSubscriptionsPopUp : EditorPopUp
     {
         private readonly ILogger _logger;
 
@@ -33,9 +33,9 @@ namespace Microsoft.DotNet.Darc.Models.PopUps
 
         public List<MergePolicy> MergePolicies => MergePoliciesPopUpHelpers.ConvertMergePolicies(_yamlData.MergePolicies);
 
-        public UpdateSubscriptionPopUp(string path,
+        public UpdateSubscriptionsPopUp(string path,
                                     ILogger logger,
-                                    Subscription subscription,
+                                    IEnumerable<Subscription> subscriptions,
                                     IEnumerable<string> suggestedChannels,
                                     IEnumerable<string> suggestedRepositories,
                                     IEnumerable<string> availableUpdateFrequencies,
