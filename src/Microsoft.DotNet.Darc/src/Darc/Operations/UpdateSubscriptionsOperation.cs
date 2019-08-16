@@ -57,7 +57,7 @@ namespace Microsoft.DotNet.Darc.Operations
                 return Constants.ErrorCode;
             }
 
-            // Determine the common elements
+            // Detemrine 
         }
     }
 }

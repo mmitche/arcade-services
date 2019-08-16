@@ -12,26 +12,98 @@ using System.Collections.ObjectModel;
 using System.Linq;
 using Newtonsoft.Json.Linq;
 using YamlDotNet.Serialization;
+using System.Collections;
 
 namespace Microsoft.DotNet.Darc.Models.PopUps
 {
+    public class SubscriptionSetting<T>
+    {
+        public bool UseOriginal { get; set; }
+        public T Setting { get; set; }
+    }
+
     public class UpdateSubscriptionsPopUp : EditorPopUp
     {
         private readonly ILogger _logger;
 
         private SubscriptionData _yamlData;
 
-        public string Channel => _yamlData.Channel;
+        public SubscriptionSetting<string> Channel { get; private set; }
 
-        public string SourceRepository => _yamlData.SourceRepository;
+        public SubscriptionSetting<string> SourceRepository { get; private set; }
 
-        public bool Batchable => bool.Parse(_yamlData.Batchable);
+        public SubscriptionSetting<string> TargetRepository { get; private set; }
 
-        public string UpdateFrequency => _yamlData.UpdateFrequency;
+        public SubscriptionSetting<string> TargetBranch { get; private set; }
 
-        public bool Enabled => bool.Parse(_yamlData.Enabled);
+        public SubscriptionSetting<bool> Batchable { get; private set; }
 
-        public List<MergePolicy> MergePolicies => MergePoliciesPopUpHelpers.ConvertMergePolicies(_yamlData.MergePolicies);
+        public SubscriptionSetting<string> UpdateFrequency { get; private set; }
+
+        public SubscriptionSetting<bool> Enabled { get; private set; }
+
+        public SubscriptionSetting<List<MergePolicy>> MergePolicies { get; private set; }
+
+        private string GetCommonSettingForDisplay(string currentValue, string nextValue)
+        {
+            return string.IsNullOrEmpty(currentValue) || currentValue == nextValue ? nextValue : "<various values>";
+        }
+
+        private static List<MergePolicyData> VariousValuesMergePolicyData = new List<MergePolicyData>
+        {
+            new MergePolicyData
+            {
+                Name = "<various merge policies>",
+                Properties = new Dictionary<string, object>()
+            }
+        };
+
+        /// <summary>
+        ///     Process the initial subscription set and set up the YAML data.
+        ///     The yaml data is presented to the user as the actual value if all values are shared,
+        ///     or a 'various values' tag if there are differences. The intended behavior is that if a user does not
+        ///     update the various values tag with a new value, the original values will remain.
+        ///     
+        ///     Merge policy data is hard. Determine common lists of names is quite simple, but the dictionary of
+        ///     merge policy properties involves specializing the comparison for each object type (mostly lists). To avoid a ton
+        ///     of complexity around this area, we always leave the merge data as 'various values' unless there is only a single subscription,
+        ///     in which case, we use the data itself
+        /// </summary>
+        /// <param name="subscriptions">Subscription set.</param>
+        private SubscriptionData ProcessInitialSubscriptionSet(IEnumerable<Subscription> subscriptions)
+        {
+            SubscriptionData yamlData = new SubscriptionData();
+            foreach (Subscription subscription in subscriptions)
+            {
+                yamlData.Id = GetCommonSettingForDisplay(yamlData.Id, subscription.Id.ToString());
+                yamlData.Channel = GetCommonSettingForDisplay(yamlData.Channel, subscription.Channel.Name);
+                yamlData.SourceRepository = GetCommonSettingForDisplay(yamlData.SourceRepository, subscription.SourceRepository);
+                yamlData.TargetBranch = GetCommonSettingForDisplay(yamlData.TargetBranch, subscription.TargetBranch);
+                yamlData.TargetRepository = GetCommonSettingForDisplay(yamlData.TargetRepository, subscription.TargetRepository);
+                yamlData.Batchable = GetCommonSettingForDisplay(yamlData.Batchable, subscription.Policy.Batchable.ToString());
+                yamlData.UpdateFrequency = GetCommonSettingForDisplay(yamlData.UpdateFrequency, subscription.Policy.UpdateFrequency.ToString());
+                yamlData.Enabled = GetCommonSettingForDisplay(yamlData.Enabled, subscription.Enabled.ToString());
+                yamlData.MergePolicies = GetCommonMergePolicyLists(yamlData.MergePolicies, MergePoliciesPopUpHelpers.ConvertMergePolicies(subscription.Policy.MergePolicies));
+            }
+
+            return yamlData;
+        }
+
+        private List<MergePolicyData> GetCommonMergePolicyLists(List<MergePolicyData> currentValue, List<MergePolicyData> nextValue)
+        {
+            if (currentValue == null)
+            {
+                return nextValue;
+            }
+            else if (currentValue == nextValue)
+            {
+                return currentValue;
+            }
+            else
+            {
+                return VariousValuesMergePolicyData;
+            }
+        }
 
         public UpdateSubscriptionsPopUp(string path,
                                     ILogger logger,
@@ -43,18 +115,10 @@ namespace Microsoft.DotNet.Darc.Models.PopUps
             : base(path)
         {
             _logger = logger;
-            
-            _yamlData = new SubscriptionData
-            {
-                Id = GetCurrentSettingForDisplay(subscription.Id.ToString(), subscription.Id.ToString(), false),
-                Channel = GetCurrentSettingForDisplay(subscription.Channel.Name, subscription.Channel.Name, false),
-                SourceRepository = GetCurrentSettingForDisplay(subscription.SourceRepository, subscription.SourceRepository, false),
-                Batchable = GetCurrentSettingForDisplay(subscription.Policy.Batchable.ToString(), subscription.Policy.Batchable.ToString(), false),
-                UpdateFrequency = GetCurrentSettingForDisplay(subscription.Policy.UpdateFrequency.ToString(), subscription.Policy.UpdateFrequency.ToString(), false),
-                Enabled = GetCurrentSettingForDisplay(subscription.Enabled.ToString(), subscription.Enabled.ToString(), false),
-            };
 
-            _yamlData.MergePolicies = MergePoliciesPopUpHelpers.ConvertMergePolicies(subscription.Policy.MergePolicies);
+            // Walk the subscriptions and determine 
+
+            _yamlData = ProcessInitialSubscriptionSet(subscriptions);
 
             ISerializer serializer = new SerializerBuilder().Build();
 
@@ -181,6 +245,12 @@ namespace Microsoft.DotNet.Darc.Models.PopUps
 
             [YamlMember(Alias = sourceRepoElement, ApplyNamingConventions = false)]
             public string SourceRepository { get; set; }
+
+            [YamlMember(Alias = sourceRepoElement, ApplyNamingConventions = false)]
+            public string TargetRepository { get; set; }
+
+            [YamlMember(Alias = sourceRepoElement, ApplyNamingConventions = false)]
+            public string TargetBranch { get; set; }
 
             [YamlMember(Alias = batchable, ApplyNamingConventions = false)]
             public string Batchable { get; set; }
