@@ -29,6 +29,9 @@ namespace Microsoft.DotNet.Darc.Options
         [Option("batchable", HelpText = "Make subscription batchable.")]
         public bool Batchable { get; set; }
 
+        [Option("batchable", Default = false, HelpText = "The subscription should be initially disabled.")]
+        public bool Disabled { get; set; }
+
         [Option("standard-automerge", HelpText = "Use standard auto-merge policies. GitHub ignores WIP and license/cla checks," +
             "Azure DevOps ignores comment, reviewer and work item linking. Both will not auto-merge if changes are requested.")]
         public bool StandardAutoMergePolicies { get; set; }

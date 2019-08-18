@@ -88,5 +88,79 @@ namespace Microsoft.DotNet.Darc.Models.PopUps
                     })
                 .ToList();
         }
+
+        public static bool MergePolicyListsAreEqual(List<MergePolicy> a, List<MergePolicy> b)
+        {
+            if (a.Count != b.Count)
+            {
+                return false;
+            }
+
+            // Walk each element in a and find an equivalent in b.
+            foreach (var mergePolicy in a)
+            {
+
+            }
+        }
+
+        /// <summary>
+        ///     Performs a check to see whether two merge policies are equivalent.
+        /// </summary>
+        /// <param name="a">Merge policy</param>
+        /// <param name="b">Merge policy</param>
+        /// <returns>True if equal, false otherwise.</returns>
+        public static bool MergePoliciesAreEqual(MergePolicy a, MergePolicy b)
+        {
+            // Initially check the name.
+            if (!a.Name.Equals(b.Name, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            // Then, do a context sensitive check based on the policy name.
+            if (a.Name.Equals(Constants.AllCheckSuccessfulMergePolicyName, StringComparison.OrdinalIgnoreCase))
+            {
+                if (a.Properties == null)
+                {
+                    return b.Properties == null;
+                }
+                else
+                {
+                    // The property is a list of ignored checks.
+                    var aIgnoredChecks = a.Properties[Constants.IgnoreChecksMergePolicyPropertyName].ToObject<List<string>>();
+                    var bIgnoredChecks = b.Properties[Constants.IgnoreChecksMergePolicyPropertyName].ToObject<List<string>>();
+
+                    if (aIgnoredChecks.Count != bIgnoredChecks.Count)
+                    {
+                        return false;
+                    }
+                    else
+                    {
+                        aIgnoredChecks.Sort();
+                        bIgnoredChecks.Sort();
+                        for (int i = 0; i < aIgnoredChecks.Count; i++)
+                        {
+                            if (!aIgnoredChecks[i].Equals(bIgnoredChecks[i], StringComparison.OrdinalIgnoreCase))
+                            {
+                                return false;
+                            }
+                        }
+                    }
+                }
+            }
+            else if (a.Name.Equals(Constants.StandardMergePolicyName, StringComparison.OrdinalIgnoreCase) ||
+                     a.Name.Equals(Constants.NoExtraCommitsMergePolicyName, StringComparison.OrdinalIgnoreCase) ||
+                     a.Name.Equals(Constants.NoRequestedChangesMergePolicyName, StringComparison.OrdinalIgnoreCase))
+            {
+                // All good, no deep comparison
+            }
+            else
+            {
+                // Unknown type. Probably needs a deep comparison. Throw
+                throw new NotImplementedException($"Unknown merge policy type {a.Name}");
+            }
+
+            return true;
+        }
     }
 }

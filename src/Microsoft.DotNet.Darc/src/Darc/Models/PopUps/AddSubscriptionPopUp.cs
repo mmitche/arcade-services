@@ -13,7 +13,7 @@ using YamlDotNet.Serialization;
 
 namespace Microsoft.DotNet.Darc.Models.PopUps
 {
-    public class AddSubscriptionPopUp : EditorPopUp
+    public partial class AddSubscriptionPopUp : EditorPopUp
     {
         private readonly ILogger _logger;
         private SubscriptionData _yamlData;
@@ -24,6 +24,7 @@ namespace Microsoft.DotNet.Darc.Models.PopUps
         public string UpdateFrequency => _yamlData.UpdateFrequency;
         public List<MergePolicy> MergePolicies => MergePoliciesPopUpHelpers.ConvertMergePolicies(_yamlData.MergePolicies);
         public bool Batchable => bool.Parse(_yamlData.Batchable);
+        public bool Enabled => bool.Parse(_yamlData.Enabled);
 
         public AddSubscriptionPopUp(string path,
                                     ILogger logger,
@@ -33,6 +34,7 @@ namespace Microsoft.DotNet.Darc.Models.PopUps
                                     string targetBranch,
                                     string updateFrequency,
                                     bool batchable,
+                                    bool enabled,
                                     List<MergePolicy> mergePolicies,
                                     IEnumerable<string> suggestedChannels,
                                     IEnumerable<string> suggestedRepositories,
@@ -49,6 +51,7 @@ namespace Microsoft.DotNet.Darc.Models.PopUps
                 TargetBranch = GetCurrentSettingForDisplay(targetBranch, "<required>", false),
                 UpdateFrequency = GetCurrentSettingForDisplay(updateFrequency, $"<'{string.Join("', '", Constants.AvailableFrequencies)}'>", false),
                 Batchable = GetCurrentSettingForDisplay(batchable.ToString(), batchable.ToString(), false),
+                Enabled = GetCurrentSettingForDisplay(enabled.ToString(), enabled.ToString(), false),
                 MergePolicies = MergePoliciesPopUpHelpers.ConvertMergePolicies(mergePolicies)
             };
 
@@ -150,6 +153,18 @@ namespace Microsoft.DotNet.Darc.Models.PopUps
             }
 
             _yamlData.Batchable = outputYamlData.Batchable;
+            if (!bool.TryParse(outputYamlData.Batchable, out bool batchable))
+            {
+                _logger.LogError("Batchable is not a valid boolean value.");
+                return Constants.ErrorCode;
+            }
+
+            _yamlData.Enabled = outputYamlData.Enabled;
+            if (!bool.TryParse(outputYamlData.Enabled, out bool enabled))
+            {
+                _logger.LogError("Enabled is not a valid boolean value.");
+                return Constants.ErrorCode;
+            }
 
             _yamlData.UpdateFrequency = ParseSetting(outputYamlData.UpdateFrequency, _yamlData.UpdateFrequency, false);
             if (string.IsNullOrEmpty(_yamlData.UpdateFrequency) || 
@@ -161,42 +176,6 @@ namespace Microsoft.DotNet.Darc.Models.PopUps
             }
 
             return Constants.SuccessCode;
-        }
-
-        /// <summary>
-        /// Helper class for YAML encoding/decoding purposes.
-        /// This is used so that we can have friendly alias names for elements.
-        /// </summary>
-        class SubscriptionData
-        {
-            public const string channelElement = "Channel";
-            public const string sourceRepoElement = "Source Repository URL";
-            public const string targetRepoElement = "Target Repository URL";
-            public const string targetBranchElement = "Target Branch";
-            public const string updateFrequencyElement = "Update Frequency";
-            public const string mergePolicyElement = "Merge Policies";
-            public const string batchableElement = "Batchable";
-
-            [YamlMember(Alias = channelElement, ApplyNamingConventions = false)]
-            public string Channel { get; set; }
-
-            [YamlMember(Alias = sourceRepoElement, ApplyNamingConventions = false)]
-            public string SourceRepository { get; set; }
-
-            [YamlMember(Alias = targetRepoElement, ApplyNamingConventions = false)]
-            public string TargetRepository { get; set; }
-
-            [YamlMember(Alias = targetBranchElement, ApplyNamingConventions = false)]
-            public string TargetBranch { get; set; }
-
-            [YamlMember(Alias = updateFrequencyElement, ApplyNamingConventions = false)]
-            public string UpdateFrequency { get; set; }
-
-            [YamlMember(Alias = batchableElement, ApplyNamingConventions = false)]
-            public string Batchable { get; set; }
-
-            [YamlMember(Alias = mergePolicyElement, ApplyNamingConventions = false)]
-            public List<MergePolicyData> MergePolicies { get; set; }
         }
     }
 }

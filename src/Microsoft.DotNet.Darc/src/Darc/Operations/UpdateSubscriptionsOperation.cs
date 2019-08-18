@@ -57,7 +57,7 @@ namespace Microsoft.DotNet.Darc.Operations
                 return Constants.ErrorCode;
             }
 
-            // Detemrine 
+            return Constants.SuccessCode;
         }
     }
 }

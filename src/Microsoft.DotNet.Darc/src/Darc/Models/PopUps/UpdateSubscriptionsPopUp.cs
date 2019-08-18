@@ -4,25 +4,27 @@
 
 using Microsoft.DotNet.Maestro.Client.Models;
 using Microsoft.Extensions.Logging;
-using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Collections.ObjectModel;
 using System.Linq;
-using Newtonsoft.Json.Linq;
 using YamlDotNet.Serialization;
-using System.Collections;
-using CommandLine;
-using Microsoft.TeamFoundation.WorkItemTracking.Process.WebApi.Models;
-using System.Configuration;
 
 namespace Microsoft.DotNet.Darc.Models.PopUps
 {
+    /// <summary>
+    ///     Class representing a single subscriptions setting.
+    ///     
+    ///     This class would ideally be eliminated, and we could use nullable types
+    ///     across the board, but that is a .NET Core 3/C# feature that isn't available here.
+    /// </summary>
+    /// <typeparam name="T">Type of setting</typeparam>
     public class SubscriptionSetting<T>
     {
         public bool UseOriginal { get; set; }
-        public T Setting { get; set; }
+        public T Value { get; set; }
 
         public static SubscriptionSetting<T> OriginalValue = new SubscriptionSetting<T> { UseOriginal = true };
         public static SubscriptionSetting<T> NewValue(T setting)
@@ -30,7 +32,7 @@ namespace Microsoft.DotNet.Darc.Models.PopUps
             return new SubscriptionSetting<T>
             {
                 UseOriginal = false,
-                Setting = setting
+                Value = setting
             };
         }
     }
@@ -67,7 +69,7 @@ namespace Microsoft.DotNet.Darc.Models.PopUps
             new MergePolicyData
             {
                 Name = VariousValuesString,
-                Properties = new Dictionary<string, object>()
+                Properties = new Dictionary<string, object> { { VariousValuesString, VariousValuesString } }
             }
         };
 
@@ -88,7 +90,6 @@ namespace Microsoft.DotNet.Darc.Models.PopUps
             SubscriptionData yamlData = new SubscriptionData();
             foreach (Subscription subscription in subscriptions)
             {
-                yamlData.Id = GetCommonSettingForDisplay(yamlData.Id, subscription.Id.ToString());
                 yamlData.Channel = GetCommonSettingForDisplay(yamlData.Channel, subscription.Channel.Name);
                 yamlData.SourceRepository = GetCommonSettingForDisplay(yamlData.SourceRepository, subscription.SourceRepository);
                 yamlData.TargetBranch = GetCommonSettingForDisplay(yamlData.TargetBranch, subscription.TargetBranch);
@@ -142,10 +143,16 @@ namespace Microsoft.DotNet.Darc.Models.PopUps
             // Initialize line contents.  Augment the input lines with suggestions and explanation
             Contents = new Collection<Line>(new List<Line>
             {
-                new Line($"Use this form to update the values of the following subscriptions subscription '{subscription.Id}'.", true),
-                new Line($"Note that if you are setting 'Is batchable' to true you need to remove all Merge Policies.", true),
-                new Line()
+                new Line($"Use this form to update the values of the following subscriptions:", true),
             });
+
+            foreach (var subscription in subscriptions)
+            {
+                Contents.Add(new Line($"  {UxHelpers.GetSubscriptionDescription(subscription)}", true));
+            }
+
+            Contents.Add(new Line($"Note that if you are setting 'Is batchable' to true you need to remove all Merge Policies.", true));
+            Contents.Add(new Line());
 
             foreach (string line in lines)
             {
@@ -213,7 +220,7 @@ namespace Microsoft.DotNet.Darc.Models.PopUps
             {
                 Enabled = SubscriptionSetting<bool>.OriginalValue;
             }
-            else if (!bool.TryParse(outputYamlData.Batchable, out bool enabled))
+            else if (!bool.TryParse(outputYamlData.Enabled, out bool enabled))
             {
                 _logger.LogError("Enabled is not a valid boolean value.");
                 return Constants.ErrorCode;
@@ -320,47 +327,6 @@ namespace Microsoft.DotNet.Darc.Models.PopUps
             }
 
             return Constants.SuccessCode;
-        }
-
-        /// <summary>
-        /// Helper class for YAML encoding/decoding purposes.
-        /// This is used so that we can have friendly alias names for elements.
-        /// </summary>
-        private class SubscriptionData
-        {
-            public const string channelElement = "Channel";
-            public const string sourceRepoElement = "Source Repository URL";
-            public const string batchable = "Batchable";
-            public const string updateFrequencyElement = "Update Frequency";
-            public const string mergePolicyElement = "Merge Policies";
-            public const string enabled = "Enabled";
-
-            [YamlMember(ApplyNamingConventions = false)]
-            public string Id { get; set; }
-
-            [YamlMember(Alias = channelElement, ApplyNamingConventions = false)]
-            public string Channel { get; set; }
-
-            [YamlMember(Alias = sourceRepoElement, ApplyNamingConventions = false)]
-            public string SourceRepository { get; set; }
-
-            [YamlMember(Alias = sourceRepoElement, ApplyNamingConventions = false)]
-            public string TargetRepository { get; set; }
-
-            [YamlMember(Alias = sourceRepoElement, ApplyNamingConventions = false)]
-            public string TargetBranch { get; set; }
-
-            [YamlMember(Alias = batchable, ApplyNamingConventions = false)]
-            public string Batchable { get; set; }
-
-            [YamlMember(Alias = updateFrequencyElement, ApplyNamingConventions = false)]
-            public string UpdateFrequency { get; set; }
-
-            [YamlMember(Alias = enabled, ApplyNamingConventions = false)]
-            public string Enabled { get; set; }
-
-            [YamlMember(Alias = mergePolicyElement, ApplyNamingConventions = false)]
-            public List<MergePolicyData> MergePolicies { get; set; }
         }
     }
 }

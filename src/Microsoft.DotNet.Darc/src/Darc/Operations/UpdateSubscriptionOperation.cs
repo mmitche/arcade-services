@@ -45,7 +45,7 @@ namespace Microsoft.DotNet.Darc.Operations
             UpdateSubscriptionsPopUp updateSubscriptionPopUp = new UpdateSubscriptionsPopUp(
                 "update-subscription/update-subscription-todo",
                 Logger,
-                subscription,
+                new List<Subscription> { subscription },
                 (await suggestedChannels).Select(suggestedChannel => suggestedChannel.Name),
                 (await suggestedRepos).SelectMany(subs => new List<string> { subscription.SourceRepository, subscription.TargetRepository }).ToHashSet(),
                 Constants.AvailableFrequencies,
@@ -60,12 +60,13 @@ namespace Microsoft.DotNet.Darc.Operations
                 return exitCode;
             }
 
-            string channel = updateSubscriptionPopUp.Channel;
-            string sourceRepository = updateSubscriptionPopUp.SourceRepository;
-            string updateFrequency = updateSubscriptionPopUp.UpdateFrequency;
-            bool batchable = updateSubscriptionPopUp.Batchable;
-            bool enabled = updateSubscriptionPopUp.Enabled;
-            List<MergePolicy> mergePolicies = updateSubscriptionPopUp.MergePolicies;
+            // Becuase we pass along a single subscription to the popup, Value should always be valid.
+            string channel = updateSubscriptionPopUp.Channel.Value;
+            string sourceRepository = updateSubscriptionPopUp.SourceRepository.Value;
+            string updateFrequency = updateSubscriptionPopUp.UpdateFrequency.Value;
+            bool batchable = updateSubscriptionPopUp.Batchable.Value;
+            bool enabled = updateSubscriptionPopUp.Enabled.Value;
+            List<MergePolicy> mergePolicies = updateSubscriptionPopUp.MergePolicies.Value;
 
             try
             {

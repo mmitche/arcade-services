@@ -15,6 +15,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.DotNet.Maestro.Client;
 using Newtonsoft.Json.Linq;
+using Microsoft.TeamFoundation.Framework.Common;
 
 namespace Microsoft.DotNet.Darc.Operations
 {
@@ -97,6 +98,7 @@ namespace Microsoft.DotNet.Darc.Operations
             string targetBranch = _options.TargetBranch;
             string updateFrequency = _options.UpdateFrequency;
             bool batchable = _options.Batchable;
+            bool enabled = !_options.Disabled;
 
             // If in quiet (non-interactive mode), ensure that all options were passed, then
             // just call the remote API
@@ -132,6 +134,7 @@ namespace Microsoft.DotNet.Darc.Operations
                                              targetBranch,
                                              updateFrequency,
                                              batchable,
+                                             enabled,
                                              mergePolicies,
                                              (await suggestedChannels).Select(suggestedChannel => suggestedChannel.Name),
                                              (await suggestedRepos).SelectMany(subscription => new List<string> {subscription.SourceRepository, subscription.TargetRepository }).ToHashSet(),
@@ -150,7 +153,8 @@ namespace Microsoft.DotNet.Darc.Operations
                 targetBranch = addSubscriptionPopup.TargetBranch;
                 updateFrequency = addSubscriptionPopup.UpdateFrequency;
                 mergePolicies = addSubscriptionPopup.MergePolicies;
-                batchable = addSubscriptionPopup.Batchable; 
+                batchable = addSubscriptionPopup.Batchable;
+                enabled = addSubscriptionPopup.Enabled;
             }
 
             try
@@ -177,6 +181,22 @@ namespace Microsoft.DotNet.Darc.Operations
                                                                            batchable,
                                                                            mergePolicies);
                 Console.WriteLine($"Successfully created new subscription with id '{newSubscription.Id}'.");
+
+                if (!enabled)
+                {
+                    SubscriptionUpdate disableUpdate = new SubscriptionUpdate
+                    {
+                        ChannelName = newSubscription.Channel.Name,
+                        SourceRepository = newSubscription.SourceRepository,
+                        Enabled = false,
+                        Policy = newSubscription.Policy
+                    };
+                    disableUpdate.Policy.Batchable = newSubscription.Policy.Batchable;
+                    disableUpdate.Policy.UpdateFrequency = newSubscription.Policy.UpdateFrequency;
+                    disableUpdate.Policy.MergePolicies = newSubscription.Policy.MergePolicies;
+
+                    await remote.UpdateSubscriptionAsync(newSubscription.Id.ToString(), disableUpdate);
+                }
                 return Constants.SuccessCode;
             }
             catch (RestApiException e) when (e.Response.StatusCode == System.Net.HttpStatusCode.BadRequest)

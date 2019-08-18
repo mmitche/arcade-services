@@ -5,6 +5,7 @@
 using Newtonsoft.Json;
 using System.Collections.Generic;
 using System.IO;
+using System.Reflection.Metadata.Ecma335;
 
 namespace Microsoft.DotNet.Darc.Models
 {
@@ -32,7 +33,12 @@ namespace Microsoft.DotNet.Darc.Models
         public IList<Line> OnClose(string path)
         {
             string[] updatedFileContents = File.ReadAllLines(path);
-            return GetContentValues(updatedFileContents);
+            return OnClose(updatedFileContents);
+        }
+
+        public IList<Line> OnClose(string[] lines)
+        {
+            return GetContentValues(lines);
         }
 
         public abstract int ProcessContents(IList<Line> contents);
@@ -43,7 +49,7 @@ namespace Microsoft.DotNet.Darc.Models
 
             foreach (string content in contents)
             {
-                if (!content.TrimStart().StartsWith("#") && !string.IsNullOrEmpty(content))
+                if (!content.TrimStart().StartsWith(Line.CommentPrefixCharacter) && !string.IsNullOrEmpty(content))
                 {
                     values.Add(new Line(content));
                 }
@@ -103,9 +109,10 @@ namespace Microsoft.DotNet.Darc.Models
 
     public class Line
     {
-        public Line(string text, bool isComment = false)
+        public const char CommentPrefixCharacter = '#';
+        public Line(string text, bool addCommentPrefix = false)
         {
-            Text = !isComment ? text : $"# {text}";
+            Text = !addCommentPrefix ? text : $"{CommentPrefixCharacter} {text}";
         }
 
         public Line()
@@ -114,5 +121,7 @@ namespace Microsoft.DotNet.Darc.Models
         }
 
         public string Text { get; set; }
+
+        public bool IsComment { get => !string.IsNullOrEmpty(Text) && Text.TrimStart().StartsWith(CommentPrefixCharacter); }
     }
 }
