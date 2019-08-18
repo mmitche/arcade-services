@@ -13,6 +13,9 @@ using System.Linq;
 using Newtonsoft.Json.Linq;
 using YamlDotNet.Serialization;
 using System.Collections;
+using CommandLine;
+using Microsoft.TeamFoundation.WorkItemTracking.Process.WebApi.Models;
+using System.Configuration;
 
 namespace Microsoft.DotNet.Darc.Models.PopUps
 {
@@ -20,6 +23,16 @@ namespace Microsoft.DotNet.Darc.Models.PopUps
     {
         public bool UseOriginal { get; set; }
         public T Setting { get; set; }
+
+        public static SubscriptionSetting<T> OriginalValue = new SubscriptionSetting<T> { UseOriginal = true };
+        public static SubscriptionSetting<T> NewValue(T setting)
+        {
+            return new SubscriptionSetting<T>
+            {
+                UseOriginal = false,
+                Setting = setting
+            };
+        }
     }
 
     public class UpdateSubscriptionsPopUp : EditorPopUp
@@ -46,14 +59,14 @@ namespace Microsoft.DotNet.Darc.Models.PopUps
 
         private string GetCommonSettingForDisplay(string currentValue, string nextValue)
         {
-            return string.IsNullOrEmpty(currentValue) || currentValue == nextValue ? nextValue : "<various values>";
+            return string.IsNullOrEmpty(currentValue) || currentValue == nextValue ? nextValue : VariousValuesString;
         }
 
         private static List<MergePolicyData> VariousValuesMergePolicyData = new List<MergePolicyData>
         {
             new MergePolicyData
             {
-                Name = "<various merge policies>",
+                Name = VariousValuesString,
                 Properties = new Dictionary<string, object>()
             }
         };
@@ -129,7 +142,7 @@ namespace Microsoft.DotNet.Darc.Models.PopUps
             // Initialize line contents.  Augment the input lines with suggestions and explanation
             Contents = new Collection<Line>(new List<Line>
             {
-                new Line($"Use this form to update the values of subscription '{subscription.Id}'.", true),
+                new Line($"Use this form to update the values of the following subscriptions subscription '{subscription.Id}'.", true),
                 new Line($"Note that if you are setting 'Is batchable' to true you need to remove all Merge Policies.", true),
                 new Line()
             });
@@ -181,44 +194,129 @@ namespace Microsoft.DotNet.Darc.Models.PopUps
             }
 
             _yamlData.Batchable = ParseSetting(outputYamlData.Batchable, _yamlData.Batchable, false);
+            if (_yamlData.Batchable == VariousValuesString)
+            {
+                Batchable = SubscriptionSetting<bool>.OriginalValue;
+            }
+            else if (!bool.TryParse(outputYamlData.Batchable, out bool batchable))
+            {
+                _logger.LogError("Batchable is not a valid boolean value.");
+                return Constants.ErrorCode;
+            }
+            else
+            {
+                Batchable = SubscriptionSetting<bool>.NewValue(batchable);
+            }
+
             _yamlData.Enabled = ParseSetting(outputYamlData.Enabled, _yamlData.Enabled, false);
-            // Make sure Batchable and Enabled are valid bools
-            if (!bool.TryParse(outputYamlData.Batchable, out bool batchable) || !bool.TryParse(outputYamlData.Enabled, out bool enabled))
+            if (_yamlData.Enabled == VariousValuesString)
             {
-                _logger.LogError("Either Batchable or Enabled is not a valid boolean values.");
+                Enabled = SubscriptionSetting<bool>.OriginalValue;
+            }
+            else if (!bool.TryParse(outputYamlData.Batchable, out bool enabled))
+            {
+                _logger.LogError("Enabled is not a valid boolean value.");
                 return Constants.ErrorCode;
             }
-
-            // Validate the merge policies
-            if (!MergePoliciesPopUpHelpers.ValidateMergePolicies(MergePoliciesPopUpHelpers.ConvertMergePolicies(outputYamlData.MergePolicies), _logger))
+            else
             {
-                return Constants.ErrorCode;
+                Enabled = SubscriptionSetting<bool>.NewValue(enabled);
             }
-
-            _yamlData.MergePolicies = outputYamlData.MergePolicies;
 
             // Parse and check the input fields
             _yamlData.Channel = ParseSetting(outputYamlData.Channel, _yamlData.Channel, false);
-            if (string.IsNullOrEmpty(_yamlData.Channel))
+            if (_yamlData.Channel == VariousValuesString)
+            {
+                Channel = SubscriptionSetting<string>.OriginalValue;
+            }
+            else if (string.IsNullOrEmpty(_yamlData.Channel))
             {
                 _logger.LogError("Channel must be non-empty");
                 return Constants.ErrorCode;
             }
+            else
+            {
+                Channel = SubscriptionSetting<string>.NewValue(_yamlData.Channel);
+            }
 
             _yamlData.SourceRepository = ParseSetting(outputYamlData.SourceRepository, _yamlData.SourceRepository, false);
-            if (string.IsNullOrEmpty(_yamlData.SourceRepository))
+            if (_yamlData.SourceRepository == VariousValuesString)
+            {
+                SourceRepository = SubscriptionSetting<string>.OriginalValue;
+            }
+            else if (string.IsNullOrEmpty(_yamlData.SourceRepository))
             {
                 _logger.LogError("Source repository URL must be non-empty");
                 return Constants.ErrorCode;
             }
+            else
+            {
+                SourceRepository = SubscriptionSetting<string>.NewValue(_yamlData.SourceRepository);
+            }
+
+            _yamlData.TargetRepository = ParseSetting(outputYamlData.TargetRepository, _yamlData.TargetRepository, false);
+            if (_yamlData.SourceRepository == VariousValuesString)
+            {
+                TargetRepository = SubscriptionSetting<string>.OriginalValue;
+            }
+            else if (string.IsNullOrEmpty(_yamlData.TargetRepository))
+            {
+                _logger.LogError("Target repository URL must be non-empty");
+                return Constants.ErrorCode;
+            }
+            else
+            {
+                TargetRepository = SubscriptionSetting<string>.NewValue(_yamlData.TargetRepository);
+            }
+
+            _yamlData.TargetBranch = ParseSetting(outputYamlData.TargetBranch, _yamlData.TargetBranch, false);
+            if (_yamlData.TargetBranch == VariousValuesString)
+            {
+                TargetBranch = SubscriptionSetting<string>.OriginalValue;
+            }
+            else if (string.IsNullOrEmpty(_yamlData.TargetBranch))
+            {
+                _logger.LogError("Target branch must be non-empty");
+                return Constants.ErrorCode;
+            }
+            else
+            {
+                TargetBranch = SubscriptionSetting<string>.NewValue(_yamlData.TargetBranch);
+            }
 
             _yamlData.UpdateFrequency = ParseSetting(outputYamlData.UpdateFrequency, _yamlData.UpdateFrequency, false);
-            if (string.IsNullOrEmpty(_yamlData.UpdateFrequency) || 
-                !Constants.AvailableFrequencies.Contains(_yamlData.UpdateFrequency, StringComparer.OrdinalIgnoreCase))
+            if (_yamlData.UpdateFrequency == VariousValuesString)
+            {
+                UpdateFrequency = SubscriptionSetting<string>.OriginalValue;
+            }
+            else if (string.IsNullOrEmpty(_yamlData.UpdateFrequency) ||
+                    !Constants.AvailableFrequencies.Contains(_yamlData.UpdateFrequency, StringComparer.OrdinalIgnoreCase))
             {
                 _logger.LogError($"Frequency should be provided and should be one of the following: " +
-                    $"'{string.Join("', '",Constants.AvailableFrequencies)}'");
+                    $"'{string.Join("', '", Constants.AvailableFrequencies)}'");
                 return Constants.ErrorCode;
+            }
+            else
+            {
+                UpdateFrequency = SubscriptionSetting<string>.NewValue(_yamlData.TargetBranch);
+            }
+
+            // Validate the merge policies
+            _yamlData.MergePolicies = outputYamlData.MergePolicies;
+            if (outputYamlData.MergePolicies.Count == 1 &&
+                outputYamlData.MergePolicies[0].Name == EditorPopUp.VariousValuesString &&
+                outputYamlData.MergePolicies[0].Properties == null)
+            {
+                MergePolicies = SubscriptionSetting<List<MergePolicy>>.OriginalValue;
+            }
+            else
+            {
+                List<MergePolicy> convertedMergePolicies = MergePoliciesPopUpHelpers.ConvertMergePolicies(outputYamlData.MergePolicies);
+                if (!MergePoliciesPopUpHelpers.ValidateMergePolicies(convertedMergePolicies, _logger))
+                {
+                    return Constants.ErrorCode;
+                }
+                MergePolicies = SubscriptionSetting<List<MergePolicy>>.NewValue(convertedMergePolicies);
             }
 
             return Constants.SuccessCode;

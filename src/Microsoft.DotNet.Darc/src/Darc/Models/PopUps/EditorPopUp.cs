@@ -27,6 +27,8 @@ namespace Microsoft.DotNet.Darc.Models
         [JsonIgnore]
         public IList<Line> Contents { get; set; }
 
+        public const string VariousValuesString = "<various values>";
+
         public IList<Line> OnClose(string path)
         {
             string[] updatedFileContents = File.ReadAllLines(path);
@@ -75,18 +77,23 @@ namespace Microsoft.DotNet.Darc.Models
         /// <param name="inputSetting">Input string from the file</param>
         /// <returns>
         ///     - Original setting if the setting is secret and value is still all ***
-        ///     - Empty string if the setting starts+ends with <>
+        ///     - VariousValuesString setting if the value is equal to the VariousValuesString constants
+        ///     - Empty string if the setting starts+ends with <> and is not VariousValuesString
         ///     - New value if anything else.
         /// </returns>
         protected string ParseSetting(string inputSetting, string originalSetting, bool isSecret)
         {
             string trimmedSetting = inputSetting.Trim();
-            if (trimmedSetting.StartsWith('<') && trimmedSetting.EndsWith('>'))
+            if (trimmedSetting == VariousValuesString)
+            {
+                return VariousValuesString;
+            }
+            else if (trimmedSetting.StartsWith('<') && trimmedSetting.EndsWith('>'))
             {
                 return string.Empty;
             }
             // If the setting is secret and only contains *, then keep it the same as the input setting
-            if (isSecret && trimmedSetting.Length > 0 && trimmedSetting.Replace("*", "") == string.Empty)
+            else if (isSecret && trimmedSetting.Length > 0 && trimmedSetting.Replace("*", "") == string.Empty)
             {
                 return originalSetting;
             }
