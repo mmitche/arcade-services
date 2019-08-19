@@ -176,7 +176,7 @@ namespace Microsoft.DotNet.Darc.Operations
                                                                            sourceRepository,
                                                                            targetRepository,
                                                                            targetBranch,
-                                                                           updateFrequency,
+                                                                           updateFrequency.Value,
                                                                            batchable,
                                                                            mergePolicies);
                 Console.WriteLine($"Successfully created new subscription with id '{newSubscription.Id}'.");

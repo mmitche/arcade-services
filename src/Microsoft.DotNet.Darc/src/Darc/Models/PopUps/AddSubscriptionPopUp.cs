@@ -32,7 +32,7 @@ namespace Microsoft.DotNet.Darc.Models.PopUps
                                     string sourceRepository,
                                     string targetRepository,
                                     string targetBranch,
-                                    UpdateFrequency updateFrequency,
+                                    UpdateFrequency? updateFrequency,
                                     bool batchable,
                                     bool enabled,
                                     List<MergePolicy> mergePolicies,
@@ -49,7 +49,7 @@ namespace Microsoft.DotNet.Darc.Models.PopUps
                 SourceRepository = GetCurrentSettingForDisplay(sourceRepository, "<required>", false),
                 TargetRepository = GetCurrentSettingForDisplay(targetRepository, "<required>", false),
                 TargetBranch = GetCurrentSettingForDisplay(targetBranch, "<required>", false),
-                UpdateFrequency = GetCurrentSettingForDisplay(updateFrequency, $"<'{string.Join("', '", Enum.GetNames(typeof(UpdateFrequency)))}'>", false),
+                UpdateFrequency = GetCurrentSettingForDisplay(updateFrequency?.ToString(), $"<'{string.Join("', '", Enum.GetNames(typeof(UpdateFrequency)))}'>", false),
                 Batchable = GetCurrentSettingForDisplay(batchable.ToString(), batchable.ToString(), false),
                 Enabled = GetCurrentSettingForDisplay(enabled.ToString(), enabled.ToString(), false),
                 MergePolicies = MergePoliciesPopUpHelpers.ConvertMergePolicies(mergePolicies)
