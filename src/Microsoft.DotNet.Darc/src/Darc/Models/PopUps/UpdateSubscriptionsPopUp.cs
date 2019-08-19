@@ -109,7 +109,7 @@ namespace Microsoft.DotNet.Darc.Models.PopUps
             {
                 return nextValue;
             }
-            else if (currentValue == nextValue)
+            else if (MergePoliciesPopUpHelpers.MergePolicyListsAreEqual(currentValue, nextValue))
             {
                 return currentValue;
             }
@@ -262,7 +262,7 @@ namespace Microsoft.DotNet.Darc.Models.PopUps
             }
 
             _yamlData.TargetRepository = ParseSetting(outputYamlData.TargetRepository, _yamlData.TargetRepository, false);
-            if (_yamlData.SourceRepository == VariousValuesString)
+            if (_yamlData.TargetRepository == VariousValuesString)
             {
                 TargetRepository = SubscriptionSetting<string>.OriginalValue;
             }
@@ -310,9 +310,9 @@ namespace Microsoft.DotNet.Darc.Models.PopUps
 
             // Validate the merge policies
             _yamlData.MergePolicies = outputYamlData.MergePolicies;
-            if (outputYamlData.MergePolicies.Count == 1 &&
-                outputYamlData.MergePolicies[0].Name == EditorPopUp.VariousValuesString &&
-                outputYamlData.MergePolicies[0].Properties == null)
+            if (outputYamlData.MergePolicies != null &&
+                outputYamlData.MergePolicies.Count == 1 &&
+                outputYamlData.MergePolicies[0].Name == EditorPopUp.VariousValuesString)
             {
                 MergePolicies = SubscriptionSetting<List<MergePolicy>>.OriginalValue;
             }

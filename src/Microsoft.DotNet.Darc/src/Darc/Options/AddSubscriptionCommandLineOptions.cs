@@ -4,6 +4,7 @@
 
 using CommandLine;
 using Microsoft.DotNet.Darc.Operations;
+using Microsoft.DotNet.Maestro.Client.Models;
 using System.Collections.Generic;
 
 namespace Microsoft.DotNet.Darc.Options
@@ -24,7 +25,7 @@ namespace Microsoft.DotNet.Darc.Options
         public string TargetBranch { get; set; }
 
         [Option("update-frequency", HelpText = "Frequency of updates. Valid values are: 'none', 'everyDay', 'everyBuild', 'twiceDaily', or 'everyWeek'.")]
-        public string UpdateFrequency { get; set; }
+        public UpdateFrequency? UpdateFrequency { get; set; }
 
         [Option("batchable", HelpText = "Make subscription batchable.")]
         public bool Batchable { get; set; }

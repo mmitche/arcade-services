@@ -55,12 +55,13 @@ namespace Microsoft.DotNet.Darc.Operations
                     Console.WriteLine($"  - Batchable: {subscription.Policy.Batchable}");
                     // If batchable, the merge policies come from the repository
                     IEnumerable<MergePolicy> mergePolicies = subscription.Policy.MergePolicies;
-                    if (subscription.Policy.Batchable == true)
+                    bool policiesFromRepo = subscription.Policy.Batchable;
+                    if (policiesFromRepo == true)
                     {
                         mergePolicies = await remote.GetRepositoryMergePoliciesAsync(subscription.TargetRepository, subscription.TargetBranch);
                     }
 
-                    Console.Write(UxHelpers.GetMergePoliciesDescription(mergePolicies, "  "));
+                    Console.Write(UxHelpers.GetMergePoliciesDescription(mergePolicies, policiesFromRepo, "  "));
 
                     // Currently the API only returns the last applied build for requests to specific subscriptions.
                     // This will be fixed, but for now, don't print the last applied build otherwise.

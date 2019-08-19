@@ -89,18 +89,35 @@ namespace Microsoft.DotNet.Darc.Models.PopUps
                 .ToList();
         }
 
-        public static bool MergePolicyListsAreEqual(List<MergePolicy> a, List<MergePolicy> b)
+        /// <summary>
+        ///     Determine whether two sets of merge policy lists are equal
+        /// </summary>
+        /// <param name="a">List a</param>
+        /// <param name="b">List b</param>
+        /// <returns></returns>
+        public static bool MergePolicyListsAreEqual(List<MergePolicyData> a, List<MergePolicyData> b)
         {
             if (a.Count != b.Count)
             {
                 return false;
             }
 
-            // Walk each element in a and find an equivalent in b.
-            foreach (var mergePolicy in a)
+            // Walk each element in a and find an equivalent in b. We can do this because
+            // the Maestro API has an invariant on it that merge policies may not duplicated
+            // If that invariant did not hold true, then we may say that two lists are equivalent when
+            // they are not, though they would still have to have the same types of elements. For example:
+            // NoExtraCommits, NoExtraCommits, AllChecksSuccessful vs. NoExtraCommits, AllChecksSuccessful, AllChecksSuccessful.
+            // In most cases, this wouldn't make any difference, unless different properties were passed on two different
+            // merge policies, which is pretty dicey anyway.
+            foreach (MergePolicyData mergePolicyInA in a)
             {
-
+                if (!b.Any(mergePolicyInB => MergePoliciesAreEqual(mergePolicyInA, mergePolicyInB)))
+                {
+                    return false;
+                }
             }
+
+            return true;
         }
 
         /// <summary>
@@ -109,7 +126,7 @@ namespace Microsoft.DotNet.Darc.Models.PopUps
         /// <param name="a">Merge policy</param>
         /// <param name="b">Merge policy</param>
         /// <returns>True if equal, false otherwise.</returns>
-        public static bool MergePoliciesAreEqual(MergePolicy a, MergePolicy b)
+        public static bool MergePoliciesAreEqual(MergePolicyData a, MergePolicyData b)
         {
             // Initially check the name.
             if (!a.Name.Equals(b.Name, StringComparison.OrdinalIgnoreCase))
@@ -127,8 +144,8 @@ namespace Microsoft.DotNet.Darc.Models.PopUps
                 else
                 {
                     // The property is a list of ignored checks.
-                    var aIgnoredChecks = a.Properties[Constants.IgnoreChecksMergePolicyPropertyName].ToObject<List<string>>();
-                    var bIgnoredChecks = b.Properties[Constants.IgnoreChecksMergePolicyPropertyName].ToObject<List<string>>();
+                    var aIgnoredChecks = (List<string>)a.Properties[Constants.IgnoreChecksMergePolicyPropertyName];
+                    var bIgnoredChecks = (List<string>)b.Properties[Constants.IgnoreChecksMergePolicyPropertyName];
 
                     if (aIgnoredChecks.Count != bIgnoredChecks.Count)
                     {

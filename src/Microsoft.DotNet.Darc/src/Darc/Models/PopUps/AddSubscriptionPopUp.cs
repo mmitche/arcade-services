@@ -21,7 +21,7 @@ namespace Microsoft.DotNet.Darc.Models.PopUps
         public string SourceRepository => _yamlData.SourceRepository;
         public string TargetRepository => _yamlData.TargetRepository;
         public string TargetBranch => _yamlData.TargetBranch;
-        public string UpdateFrequency => _yamlData.UpdateFrequency;
+        public UpdateFrequency UpdateFrequency => Enum.Parse<UpdateFrequency>(_yamlData.UpdateFrequency);
         public List<MergePolicy> MergePolicies => MergePoliciesPopUpHelpers.ConvertMergePolicies(_yamlData.MergePolicies);
         public bool Batchable => bool.Parse(_yamlData.Batchable);
         public bool Enabled => bool.Parse(_yamlData.Enabled);
@@ -32,7 +32,7 @@ namespace Microsoft.DotNet.Darc.Models.PopUps
                                     string sourceRepository,
                                     string targetRepository,
                                     string targetBranch,
-                                    string updateFrequency,
+                                    UpdateFrequency updateFrequency,
                                     bool batchable,
                                     bool enabled,
                                     List<MergePolicy> mergePolicies,
@@ -49,7 +49,7 @@ namespace Microsoft.DotNet.Darc.Models.PopUps
                 SourceRepository = GetCurrentSettingForDisplay(sourceRepository, "<required>", false),
                 TargetRepository = GetCurrentSettingForDisplay(targetRepository, "<required>", false),
                 TargetBranch = GetCurrentSettingForDisplay(targetBranch, "<required>", false),
-                UpdateFrequency = GetCurrentSettingForDisplay(updateFrequency, $"<'{string.Join("', '", Constants.AvailableFrequencies)}'>", false),
+                UpdateFrequency = GetCurrentSettingForDisplay(updateFrequency, $"<'{string.Join("', '", Enum.GetNames(typeof(UpdateFrequency)))}'>", false),
                 Batchable = GetCurrentSettingForDisplay(batchable.ToString(), batchable.ToString(), false),
                 Enabled = GetCurrentSettingForDisplay(enabled.ToString(), enabled.ToString(), false),
                 MergePolicies = MergePoliciesPopUpHelpers.ConvertMergePolicies(mergePolicies)

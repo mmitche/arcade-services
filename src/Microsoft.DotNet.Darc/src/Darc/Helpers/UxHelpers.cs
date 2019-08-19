@@ -65,7 +65,7 @@ namespace Microsoft.DotNet.Darc
 
         public static string GetSubscriptionDescription(Subscription subscription)
         {
-            return $"{subscription.SourceRepository} ({subscription.Channel.Name}) ==> '{subscription.TargetRepository}' ('{subscription.TargetBranch}')";
+            return $"{subscription.SourceRepository} ({subscription.Channel.Name}) ==> {subscription.TargetRepository} ({subscription.TargetBranch})";
         }
 
         /// <summary>
@@ -104,13 +104,13 @@ namespace Microsoft.DotNet.Darc
         /// <param name="mergePolicies">Merge policies</param>
         /// <param name="indent">Indentation of lines</param>
         /// <returns>Description string</returns>
-        public static string GetMergePoliciesDescription(IEnumerable<MergePolicy> mergePolicies, string indent = "")
+        public static string GetMergePoliciesDescription(IEnumerable<MergePolicy> mergePolicies, bool fromRepoPolicies, string indent = "")
         {
             StringBuilder builder = new StringBuilder();
 
             if (mergePolicies.Any())
             {
-                builder.AppendLine($"{indent}- Merge Policies:");
+                builder.AppendLine($"{indent}- Merge Policies{(fromRepoPolicies ? "(from repository policies)": string.Empty)}:");
                 foreach (MergePolicy mergePolicy in mergePolicies)
                 {
                     builder.AppendLine($"{indent}  {mergePolicy.Name}");

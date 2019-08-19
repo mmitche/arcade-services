@@ -3,6 +3,7 @@
 // See the LICENSE file in the project root for more information.
 
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
@@ -167,19 +168,14 @@ namespace Microsoft.DotNet.DarcLib
         /// </param>
         /// <returns>Newly created subscription, if successful</returns>
         public Task<Subscription> CreateSubscriptionAsync(string channelName, string sourceRepo, string targetRepo,
-            string targetBranch, string updateFrequency, bool batchable, List<MergePolicy> mergePolicies)
+            string targetBranch, UpdateFrequency updateFrequency, bool batchable, List<MergePolicy> mergePolicies)
         {
             var subscriptionData = new SubscriptionData(
                 channelName: channelName,
                 sourceRepository: sourceRepo,
                 targetRepository: targetRepo,
                 targetBranch: targetBranch,
-                policy: new SubscriptionPolicy(
-                    batchable,
-                    (UpdateFrequency) Enum.Parse(
-                        typeof(UpdateFrequency),
-                        updateFrequency,
-                        ignoreCase: true))
+                policy: new SubscriptionPolicy(batchable, updateFrequency)
                 {
                     MergePolicies = mergePolicies.ToImmutableList(),
                 });

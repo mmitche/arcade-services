@@ -96,7 +96,7 @@ namespace Microsoft.DotNet.Darc.Operations
             string sourceRepository = _options.SourceRepository;
             string targetRepository = _options.TargetRepository;
             string targetBranch = _options.TargetBranch;
-            string updateFrequency = _options.UpdateFrequency;
+            UpdateFrequency? updateFrequency = _options.UpdateFrequency;
             bool batchable = _options.Batchable;
             bool enabled = !_options.Disabled;
 
@@ -108,8 +108,7 @@ namespace Microsoft.DotNet.Darc.Operations
                     string.IsNullOrEmpty(sourceRepository) ||
                     string.IsNullOrEmpty(targetRepository) ||
                     string.IsNullOrEmpty(targetBranch) ||
-                    string.IsNullOrEmpty(updateFrequency) ||
-                    !Constants.AvailableFrequencies.Contains(updateFrequency, StringComparer.OrdinalIgnoreCase))
+                    !updateFrequency.HasValue)
                 {
                     Logger.LogError($"Missing input parameters for the subscription. Please see command help or remove --quiet/-q for interactive mode");
                     return Constants.ErrorCode;

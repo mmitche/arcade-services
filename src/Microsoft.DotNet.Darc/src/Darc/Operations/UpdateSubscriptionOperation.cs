@@ -47,7 +47,7 @@ namespace Microsoft.DotNet.Darc.Operations
                 Logger,
                 new List<Subscription> { subscription },
                 (await suggestedChannels).Select(suggestedChannel => suggestedChannel.Name),
-                (await suggestedRepos).SelectMany(subs => new List<string> { subscription.SourceRepository, subscription.TargetRepository }).ToHashSet(),
+                (await suggestedRepos).SelectMany(subs => new List<string> { subs.SourceRepository, subs.TargetRepository }).ToHashSet(),
                 Constants.AvailableFrequencies,
                 Constants.AvailableMergePolicyYamlHelp);
 
@@ -60,7 +60,7 @@ namespace Microsoft.DotNet.Darc.Operations
                 return exitCode;
             }
 
-            // Becuase we pass along a single subscription to the popup, Value should always be valid.
+            // Because we pass along a single subscription to the popup, Value should always be valid.
             string channel = updateSubscriptionPopUp.Channel.Value;
             string sourceRepository = updateSubscriptionPopUp.SourceRepository.Value;
             string updateFrequency = updateSubscriptionPopUp.UpdateFrequency.Value;

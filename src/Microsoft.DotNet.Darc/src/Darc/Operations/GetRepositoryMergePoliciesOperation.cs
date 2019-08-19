@@ -59,7 +59,8 @@ namespace Microsoft.DotNet.Darc.Operations
                 foreach (var repository in filteredRepositories)
                 {
                     Console.WriteLine($"{repository.Repository} @ {repository.Branch}");
-                    Console.Write(UxHelpers.GetMergePoliciesDescription(repository.MergePolicies));
+                    // Pass false here since the user knows they are looking at repo policies.
+                    Console.Write(UxHelpers.GetMergePoliciesDescription(repository.MergePolicies, false));
                 }
 
                 return Constants.SuccessCode;

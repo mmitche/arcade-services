@@ -45,7 +45,7 @@ namespace Microsoft.DotNet.DarcLib
             string sourceRepo,
             string targetRepo,
             string targetBranch,
-            string updateFrequency,
+            UpdateFrequency updateFrequency,
             bool batchable,
             List<MergePolicy> mergePolicies);
 
