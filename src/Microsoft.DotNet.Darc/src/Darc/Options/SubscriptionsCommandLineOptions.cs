@@ -46,6 +46,9 @@ namespace Microsoft.DotNet.Darc.Options
         [Option("ids", Separator = ',', HelpText = "Get only subscriptions with these ids.")]
         public IEnumerable<string> SubscriptionIds { get; set; }
 
+        [Option("id", HelpText = "Get only subscription with this ids")]
+        public string SubscriptionId { get; set; }
+
         public bool HasAtLeastOneFilter()
         {
             return !string.IsNullOrEmpty(TargetRepository) ||
@@ -86,7 +89,16 @@ namespace Microsoft.DotNet.Darc.Options
 
         public bool SubscriptionIdsParameterMatches(Subscription subscription)
         {
-            return !SubscriptionIds.Any() || SubscriptionIds.Any(id => id.Equals(subscription.Id.ToString(), StringComparison.OrdinalIgnoreCase));
+            // Since there is both --id and --ids, preference --id since it is more restrictive.
+            // Yes, it makes no sense to use both, but there's nothing technically wrong with it.
+            if (!string.IsNullOrEmpty(SubscriptionId))
+            {
+                return SubscriptionId.Equals(subscription.Id.ToString(), StringComparison.OrdinalIgnoreCase);
+            }
+            else
+            {
+                return !SubscriptionIds.Any() || SubscriptionIds.Any(id => id.Equals(subscription.Id.ToString(), StringComparison.OrdinalIgnoreCase));
+            }
         }
 
         /// <summary>

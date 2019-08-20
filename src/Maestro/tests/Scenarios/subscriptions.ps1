@@ -170,6 +170,18 @@ Merge Policies:
         }
     }
 
+    # Subscription updating tests
+    Write-Host ""
+    Write-Host "Testing subscription updating..."
+
+    # Test a single subscription, with no updates in the window. Should be the
+    # same subscription after the update
+
+    # Test a single subscription, updating non-key elements using update-subscription
+
+    # Test a single subscription, updating non-key elements using
+    # update-subscriptions
+
     Write-Host "Tests passed."
 } finally {
     Teardown
