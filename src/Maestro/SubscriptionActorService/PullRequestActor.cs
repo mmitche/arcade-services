@@ -1010,7 +1010,7 @@ This pull request {(merged ? "has been merged" : "will be merged")} because the 
         ///     updates required based on the input updates.  The second pass uses the repo state + the
         ///     updates from the first pass to determine what else needs to change based on the coherency metadata.
         /// </remarks>
-        private async Task<List<(UpdateAssetsParameters update, List<DependencyDetail> deps)>> GetRequiredUpdates(
+        private async Task<List<(UpdateAssetsParameters update, List<DependencyUpdate> deps)>> GetRequiredUpdates(
             List<UpdateAssetsParameters> updates,
             IRemoteFactory remoteFactory,
             string targetRepository,
@@ -1019,7 +1019,7 @@ This pull request {(merged ? "has been merged" : "will be merged")} because the 
             // Get a remote factory for the target repo
             IRemote darc = await remoteFactory.GetRemoteAsync(targetRepository, Logger);
 
-            var requiredUpdates = new List<(UpdateAssetsParameters update, List<DependencyDetail> deps)>();
+            var requiredUpdates = new List<(UpdateAssetsParameters update, List<DependencyUpdate> deps)>();
             // Existing details 
             List<DependencyDetail> existingDependencies = (await darc.GetDependenciesAsync(targetRepository, branch)).ToList();
 
@@ -1054,14 +1054,13 @@ This pull request {(merged ? "has been merged" : "will be merged")} because the 
                     continue;
                 }
 
-                List<DependencyDetail> targetOfUpdates = dependenciesToUpdate.Select(u => u.To).ToList();
                 // Update the existing details list
                 foreach (DependencyUpdate dependencyUpdate in dependenciesToUpdate)
                 {
                     existingDependencies.Remove(dependencyUpdate.From);
                     existingDependencies.Add(dependencyUpdate.To);
                 }
-                requiredUpdates.Add((update, targetOfUpdates));
+                requiredUpdates.Add((update, dependenciesToUpdate));
             }
 
             // Once we have applied all of non coherent updates, then we need to run a coherency check on the
