@@ -8,12 +8,15 @@ using Microsoft.DotNet.DarcLib;
 using Microsoft.DotNet.DarcLib.Helpers;
 using Microsoft.DotNet.Maestro.Client.Models;
 using Microsoft.Extensions.Logging;
+using Microsoft.TeamFoundation.Build.WebApi.Events;
+using Microsoft.VisualStudio.Services.Common;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using YamlDotNet.RepresentationModel;
 
 namespace Microsoft.DotNet.Darc.Operations
 {
@@ -81,6 +84,94 @@ namespace Microsoft.DotNet.Darc.Operations
                 if (targetChannel != null)
                 {
                     flowGraph.PruneGraph(node => IsInterestingNode(targetChannel, node), edge => IsInterestingEdge(edge));
+                }
+
+                // In this, we will interpret the root of the graph as those nodes that have no outgoing edges
+                // (call them 'products').  Connect all of these via a start node.
+                // Add a start node to the graph (a node that connects all nodes that have no outgoing edges
+                // We will also reverse the graph by flipping the interpretation of incoming and outgoing.
+                DependencyFlowNode startNode = new DependencyFlowNode("start", "start");
+                foreach (var node in flowGraph.Nodes)
+                {
+                    if (!node.OutgoingEdges.Any())
+                    {
+                        DependencyFlowEdge newEdge = new DependencyFlowEdge(node, startNode, null);
+                        startNode.IncomingEdges.Add(newEdge);
+                        node.OutgoingEdges.Add(newEdge);
+                    }
+                }
+                flowGraph.Nodes.Add(startNode);
+
+                // Compute dominators. Start with a full set of nodes
+                // on edge dominator
+                Dictionary<DependencyFlowNode, HashSet<DependencyFlowNode>> dominators = new Dictionary<DependencyFlowNode, HashSet<DependencyFlowNode>>();
+                foreach (var node in flowGraph.Nodes)
+                {
+                    dominators.Add(node, new HashSet<DependencyFlowNode>(flowGraph.Nodes));
+                }
+
+                Queue<DependencyFlowNode> workList = new Queue<DependencyFlowNode>();
+                workList.Enqueue(startNode);
+
+                while (workList.Count != 0)
+                {
+                    var currentNode = workList.Dequeue();
+
+                    // Compute a new dominator set for this node. Remeber we are 
+                    // flipping the interepretation of incoming and outgoing
+                    HashSet<DependencyFlowNode> newDom = null;
+
+                    var predecessors = currentNode.OutgoingEdges.Select(e => e.To);
+                    var successors = currentNode.IncomingEdges.Select(e => e.From);
+
+                    // Compute the intersection of the dominators for the predecessors
+                    foreach (var predNode in predecessors)
+                    {
+                        if (newDom == null)
+                        {
+                            newDom = new HashSet<DependencyFlowNode>(dominators[predNode]);
+                        }
+                        else
+                        {
+                            newDom.IntersectWith(dominators[predNode]);
+                        }
+                    }
+
+                    if (newDom == null)
+                    {
+                        newDom = new HashSet<DependencyFlowNode>();
+                    }
+                    
+                    // Add the current node
+                    newDom.Add(currentNode);
+
+                    // Compare to the existing dominator set for this node
+                    if (!dominators[currentNode].SetEquals(newDom))
+                    {
+                        dominators[currentNode] = newDom;
+
+                        // Queue all of the successors
+                        foreach (var succ in successors)
+                        {
+                            workList.Enqueue(succ);
+                        }
+                    }
+                }
+
+                // Determine backedges
+                List<DependencyFlowEdge> toRemove = new List<DependencyFlowEdge>();
+                foreach (var edge in flowGraph.Edges)
+                {
+                    if (dominators[edge.To].Contains(edge.From))
+                    {
+                        Console.WriteLine($"Back edge -- {edge.From.Repository}@{edge.From.Branch}->{edge.To.Repository}@{edge.To.Branch}");
+                        toRemove.Add(edge);
+                    }
+                }
+
+                foreach (var edge in toRemove)
+                {
+                    flowGraph.RemoveEdge(edge);
                 }
 
                 await LogGraphViz(targetChannel, flowGraph);
