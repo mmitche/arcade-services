@@ -2,8 +2,10 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 // See the LICENSE file in the project root for more information.
 
+using Microsoft.DotNet.Darc.Options;
 using Microsoft.DotNet.DarcLib;
 using Microsoft.DotNet.Maestro.Client.Models;
+using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -78,11 +80,39 @@ namespace Microsoft.DotNet.Darc
         }
 
         /// <summary>
-        ///     Get a string description of a build.
+        /// Retrieve a description of the build
+        /// </summary>
+        /// <param name="build">Build to get a description of</param>
+        /// <param name="outputFormat">Desired output format</param>
+        /// <returns>String description of the build</returns>
+        public static string GetBuildDescription(Build build, DarcOutputType outputFormat)
+        {
+            string azdoBuildLink = null;
+            if (!string.IsNullOrEmpty(build.AzureDevOpsAccount) &&
+                !string.IsNullOrEmpty(build.AzureDevOpsProject) &&
+                build.AzureDevOpsBuildId.HasValue)
+            {
+                azdoBuildLink = $"https://dev.azure.com/{build.AzureDevOpsAccount}/{build.AzureDevOpsProject}/_build/results?buildId={build.AzureDevOpsBuildId.Value}";
+            }
+
+            switch (outputFormat)
+            {
+                case DarcOutputType.yaml:
+                    return GetYamlBuildDescription(build, azdoBuildLink);
+                case DarcOutputType.json:
+                    return GetJsonBuildDescription(build, azdoBuildLink);
+                default:
+                    throw new NotImplementedException($"Darc output type {outputFormat} not supported for build description.");
+            }
+        }
+
+        /// <summary>
+        ///     Get a string description of a build in yaml format
         /// </summary>
         /// <param name="build">Build</param>
+        /// <param name="azdoBuildLink">Link to azdo build, or null if it doesn't exist.</param>
         /// <returns>Description</returns>
-        public static string GetBuildDescription(Build build)
+        private static string GetYamlBuildDescription(Build build, string azdoBuildLink)
         {
             StringBuilder builder = new StringBuilder();
             builder.AppendLine($"Repository:    {build.GitHubRepository ?? build.AzureDevOpsRepository}");
@@ -90,12 +120,9 @@ namespace Microsoft.DotNet.Darc
             builder.AppendLine($"Commit:        {build.Commit}");
             builder.AppendLine($"Build Number:  {build.AzureDevOpsBuildNumber}");
             builder.AppendLine($"Date Produced: {build.DateProduced.ToLocalTime().ToString("g")}");
-            if (!string.IsNullOrEmpty(build.AzureDevOpsAccount) &&
-                !string.IsNullOrEmpty(build.AzureDevOpsProject) &&
-                build.AzureDevOpsBuildId.HasValue)
+            if (!string.IsNullOrEmpty(azdoBuildLink))
             {
-                string azdoLink = $"https://dev.azure.com/{build.AzureDevOpsAccount}/{build.AzureDevOpsProject}/_build/results?buildId={build.AzureDevOpsBuildId.Value}";
-                builder.AppendLine($"Build Link:    {azdoLink}");
+                builder.AppendLine($"Build Link:    {azdoBuildLink}");
             }
             builder.AppendLine($"BAR Build Id:  {build.Id}");
             builder.AppendLine($"Released:      {build.Released}");
@@ -109,6 +136,30 @@ namespace Microsoft.DotNet.Darc
             }
 
             return builder.ToString();
+        }
+
+        /// <summary>
+        ///     Get a string description of a build in json format
+        /// </summary>
+        /// <param name="build">Build</param>
+        /// <param name="azdoBuildLink">Link to azdo build, or null if it doesn't exist.</param>
+        /// <returns>Description</returns>
+        private static string GetJsonBuildDescription(Build build, string azdoBuildLink)
+        {
+            var buildDescription = new
+            {
+                repository = build.GitHubRepository ?? build.AzureDevOpsRepository,
+                branch = build.GitHubBranch ?? build.AzureDevOpsBranch,
+                commit = build.Commit,
+                buildNumber = build.AzureDevOpsBuildNumber,
+                dateProduced = build.DateProduced.ToLocalTime().ToString("g"),
+                buildLink = azdoBuildLink,
+                barBuildID = build.Id,
+                released = build.Released,
+                channels = build.Channels != null ? build.Channels.Select(channel => channel.Name) : null
+            };
+
+            return JsonConvert.SerializeObject(buildDescription, Formatting.Indented);
         }
 
         /// <summary>

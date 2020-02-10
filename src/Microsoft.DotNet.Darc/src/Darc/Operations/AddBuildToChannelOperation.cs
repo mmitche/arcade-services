@@ -59,7 +59,7 @@ namespace Microsoft.DotNet.Darc.Operations
 
                 Console.WriteLine($"Assigning the following build to channel '{targetChannel.Name}':");
                 Console.WriteLine();
-                Console.Write(UxHelpers.GetBuildDescription(build));
+                Console.Write(UxHelpers.GetBuildDescription(build, _options.OutputFormat));
 
                 // Queues a build of the Build Promotion pipeline that will takes care of making sure
                 // that the build assets are published to the right location and also promoting the build

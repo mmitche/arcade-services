@@ -80,7 +80,7 @@ namespace Microsoft.DotNet.Darc.Operations
                     foundMatching = true;
 
                     Console.WriteLine($"{asset.Name} @ {asset.Version}");
-                    Console.Write(UxHelpers.GetBuildDescription(buildInfo));
+                    Console.Write(UxHelpers.GetBuildDescription(buildInfo, _options.OutputFormat));
                     Console.WriteLine("Locations:");
                     if (asset.Locations.Any())
                     {
