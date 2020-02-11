@@ -11,6 +11,13 @@ namespace Microsoft.DotNet.DarcLib
     public interface IGitRepo
     {
         /// <summary>
+        /// Checks that a repository exists
+        /// </summary>
+        /// <param name="repoUri">Repository uri</param>
+        /// <returns>True if the repository exists, false otherwise.</returns>
+        Task<bool> RepoExistsAsync(string repoUri);
+
+        /// <summary>
         /// Create a new branch in a repository
         /// </summary>
         /// <param name="repoUri">Repo to create a branch in</param>
@@ -120,7 +127,7 @@ namespace Microsoft.DotNet.DarcLib
         /// </summary>
         /// <param name="repoUri">Repository uri</param>
         /// <param name="branch">Branch to retrieve the latest sha for</param>
-        /// <returns>Latest sha.  Throws if no commits were found.</returns>
+        /// <returns>Latest sha.  Null if no commits were found.</returns>
         Task<string> GetLastCommitShaAsync(string repoUri, string branch);
 
         /// <summary>

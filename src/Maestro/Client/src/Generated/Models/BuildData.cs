@@ -6,7 +6,7 @@ namespace Microsoft.DotNet.Maestro.Client.Models
 {
     public partial class BuildData
     {
-        public BuildData(string commit, string azureDevOpsAccount, string azureDevOpsProject, string azureDevOpsBuildNumber, string azureDevOpsRepository, string azureDevOpsBranch, bool publishUsingPipelines)
+        public BuildData(string commit, string azureDevOpsAccount, string azureDevOpsProject, string azureDevOpsBuildNumber, string azureDevOpsRepository, string azureDevOpsBranch, bool publishUsingPipelines, bool released)
         {
             Commit = commit;
             AzureDevOpsAccount = azureDevOpsAccount;
@@ -15,16 +15,17 @@ namespace Microsoft.DotNet.Maestro.Client.Models
             AzureDevOpsRepository = azureDevOpsRepository;
             AzureDevOpsBranch = azureDevOpsBranch;
             PublishUsingPipelines = publishUsingPipelines;
+            Released = released;
         }
 
         [JsonProperty("commit")]
         public string Commit { get; set; }
 
         [JsonProperty("assets")]
-        public IImmutableList<AssetData> Assets { get; set; }
+        public IImmutableList<Models.AssetData> Assets { get; set; }
 
         [JsonProperty("dependencies")]
-        public IImmutableList<BuildRef> Dependencies { get; set; }
+        public IImmutableList<Models.BuildRef> Dependencies { get; set; }
 
         [JsonProperty("azureDevOpsBuildId")]
         public int? AzureDevOpsBuildId { get; set; }
@@ -55,6 +56,9 @@ namespace Microsoft.DotNet.Maestro.Client.Models
 
         [JsonProperty("publishUsingPipelines")]
         public bool PublishUsingPipelines { get; set; }
+
+        [JsonProperty("released")]
+        public bool Released { get; set; }
 
         [JsonIgnore]
         public bool IsValid

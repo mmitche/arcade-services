@@ -9,6 +9,11 @@ using System.ComponentModel.DataAnnotations.Schema;
 using System.Linq;
 using EntityFrameworkCore.Triggers;
 using Microsoft.DotNet.DarcLib;
+using Microsoft.DotNet.Services.Utility;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Configuration.AzureAppConfiguration;
+using Microsoft.Extensions.Logging;
 
 namespace Maestro.Data.Models
 {
@@ -16,33 +21,59 @@ namespace Maestro.Data.Models
     {
         private string _azureDevOpsRepository;
         private string _gitHubRepository;
+        private string _azureDevOpsBranch;
+        private string _githubBranch;
+
+        // Used to fetch dynamic configurations from Azure App Configuration
+        // These fields are set by Startup.cs at system initialization
+        public static IConfigurationRefresher s_configurationRefresher { get; set; }
+        public static IConfiguration s_dynamicConfigs { get; set; }
 
         static Build()
         {
             Triggers<Build>.Inserted += entry =>
             {
-                Build build = entry.Entity;
-                var context = (BuildAssetRegistryContext) entry.Context;
+                // The need to check for null here is because these properties are usually set in Startup.cs in Maestro.Web
+                // however they aren't set for unit test cases but this class is used there.
+                if (s_configurationRefresher != null && s_dynamicConfigs != null)
+                {
+                    s_configurationRefresher.Refresh().GetAwaiter().GetResult();
 
-                context.BuildChannels.AddRange((
-                    from dc in context.DefaultChannels
-                    where (dc.Enabled)
-                    where (dc.Repository == build.GitHubRepository || dc.Repository == build.AzureDevOpsRepository)
-                    where (dc.Branch == build.GitHubBranch || dc.Branch == build.AzureDevOpsBranch)
-                    select new BuildChannel
+                    bool.TryParse(s_dynamicConfigs["FeatureManagement:AutoBuildPromotion"], out var autoBuildPromotion);
+
+                    if (autoBuildPromotion)
                     {
-                        Channel = dc.Channel,
-                        Build = build
-                    }).Distinct());
+                        Build build = entry.Entity;
+                        var context = (BuildAssetRegistryContext)entry.Context;
 
-                context.SaveChangesWithTriggers(b => context.SaveChanges(b));
+                        context.BuildChannels.AddRange((
+                            from dc in context.DefaultChannels
+                            where (dc.Enabled)
+                            where (dc.Repository == build.GitHubRepository || dc.Repository == build.AzureDevOpsRepository)
+                            where (dc.Branch == build.GitHubBranch || dc.Branch == build.AzureDevOpsBranch)
+                            select new BuildChannel
+                            {
+                                Channel = dc.Channel,
+                                Build = build,
+                                DateTimeAdded = DateTimeOffset.UtcNow
+                            }).Distinct());
+
+                        context.SaveChangesWithTriggers(b => context.SaveChanges(b));
+                    }
+                }
+                else
+                {
+                    BuildAssetRegistryContext context = entry.Context as BuildAssetRegistryContext;
+                    ILogger<Build> logger = context.GetService<ILogger<Build>>();
+                    logger.LogInformation("Automatic build promotion is disabled because no App Configuration was available.");
+                }
             };
         }
 
         [Key]
         [DatabaseGenerated(DatabaseGeneratedOption.Identity)]
         public int Id { get; set; }
-        
+
         public string Commit { get; set; }
 
         public int? AzureDevOpsBuildId { get; set; }
@@ -68,8 +99,19 @@ namespace Maestro.Data.Models
             }
         }
 
-        public string AzureDevOpsBranch { get; set; }
-      
+        public string AzureDevOpsBranch
+        {
+            get
+            {
+                return AzureDevOpsClient.NormalizeUrl(_azureDevOpsBranch);
+            }
+
+            set
+            {
+                _azureDevOpsBranch = AzureDevOpsClient.NormalizeUrl(value);
+            }
+        }
+
         public string GitHubRepository
         {
             get
@@ -83,15 +125,32 @@ namespace Maestro.Data.Models
             }
         }
 
-        public string GitHubBranch { get; set; }
-
-        public bool PublishUsingPipelines { get; set; }
+        public string GitHubBranch
+        {
+            get
+            {
+                return GitHelpers.NormalizeBranchName(_githubBranch);
+            }
+            set
+            {
+                _githubBranch = GitHelpers.NormalizeBranchName(value);
+            }
+        }
 
         public DateTimeOffset DateProduced { get; set; }
 
         public List<Asset> Assets { get; set; }
 
         public List<BuildChannel> BuildChannels { get; set; }
+
+        /// <summary>
+        /// If true, the build has been released to the public. This can be used to make decisions on whether certain
+        /// builds should be included in future release drops.
+        /// </summary>
+        public bool Released { get; set; } = false;
+
+        [NotMapped]
+        public int Staleness { get; set; }
 
         [NotMapped]
         public List<BuildDependency> DependentBuildIds { get; set; }
@@ -103,6 +162,7 @@ namespace Maestro.Data.Models
         public Build Build { get; set; }
         public int ChannelId { get; set; }
         public Channel Channel { get; set; }
+        public DateTimeOffset DateTimeAdded { get; set; }
 
         public override bool Equals(object obj)
         {
@@ -124,5 +184,9 @@ namespace Maestro.Data.Models
         public int DependentBuildId { get; set; }
         public Build DependentBuild { get; set; }
         public bool IsProduct { get; set; }
+
+        // Time between when the dependent build was produced and when it was first added as a dependency
+        // To this build's repository and branch
+        public double TimeToInclusionInMinutes { get; set; }
     }
 }

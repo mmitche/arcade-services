@@ -59,7 +59,7 @@ function Teardown() {
     foreach ($subscriptionId in $global:subscriptionsToDelete) {
         try {
             Write-Host "Deleting $subscriptionId"
-            Darc-Delete-Subscription "$subscriptionId" 
+            Darc-Delete-Subscription "$subscriptionId"
         } catch {
             Write-Warning "Failed to delete subscription with id $subscriptionId"
             Write-Warning $_
@@ -95,7 +95,7 @@ function Teardown() {
     foreach ($channel in $global:channelsToDelete) {
         try {
             Write-Host "Deleting channel $channel"
-            Darc-Command delete-channel --name "$channel" 
+            Darc-Command delete-channel --name "$channel"
         } catch {
             Write-Warning "Failed to delete channel $channel"
             Write-Warning $_
@@ -166,11 +166,11 @@ function Darc-Command-WithPipeline([Parameter(ValueFromPipeline=$true)]$pipeline
     if ($darcCommandPrefix) {
         $finalParams = ,"$darcCommandPrefix" + $finalParams
     }
-    Write-Host "Running 'pipelineParams | $darcTool $finalParams $darcAuthParams'"
+    Write-Host "Running 'pipelineParams | $darcTool $finalParams ***'"
     $commandOutput = $pipelineParams| & $darcTool @finalParams @darcAuthParams
     if ($LASTEXITCODE -ne 0) {
       Write-Host ${commandOutput}
-      throw "Darc command exited with exit code: $LASTEXITCODE"
+      throw "Darc command exited with exit code: $LASTEXITCODE`n${commandOutput}"
     } else {
       $commandOutput
     }
@@ -181,11 +181,11 @@ function Darc-Command([Parameter(ValueFromRemainingArguments=$true)]$darcParams)
     if ($darcCommandPrefix) {
         $finalParams = ,"$darcCommandPrefix" + $finalParams
     }
-    Write-Host "Running '$darcTool $finalParams $darcAuthParams'"
+    Write-Host "Running '$darcTool $finalParams ***'"
     $commandOutput = & $darcTool @finalParams @darcAuthParams
     if ($LASTEXITCODE -ne 0) {
       Write-Host ${commandOutput}
-      throw "Darc command exited with exit code: $LASTEXITCODE"
+      throw "Darc command exited with exit code: $LASTEXITCODE`n${commandOutput}"
     } else {
       $commandOutput
     }
@@ -217,9 +217,11 @@ function Darc-Delete-Channel($channelName) {
 
 # Run darc add-channel and record the channel for later deletion
 function Darc-Add-Default-Channel($channelName, $repoUri, $branch) {
-    $darcParams = @( "add-default-channel", "--channel", "$channelName", "--repo", "$repoUri", "--branch", "$branch" )
+    $darcParams = @( "add-default-channel", "--channel", "$channelName", "--repo", "$repoUri", "--branch", "$branch", "--quiet" )
     Darc-Command -darcParams $darcParams
-    $global:defaultChannelsToDelete += @{ channel = $channelName; repo = $repoUri; branch = $branch }
+    # We sometimes call add-default-channel with a refs/heads/ prefix, which
+    # will get stripped away by the DB.
+    $global:defaultChannelsToDelete += @{ channel = $channelName; repo = $repoUri; branch = $branch.ToString().Replace("refs/heads/", "") }
 }
 
 function Darc-Delete-Default-Channel($channelName, $repoUri, $branch) {
@@ -237,12 +239,24 @@ function Darc-Disable-Default-Channel($channelName, $repoUri, $branch) {
     Darc-Command -darcParams $darcParams
 }
 
+function Darc-Get-Default-Channel-From-Api($repoUri, $branch) {
+    $headers = Get-Bar-Headers 'text/plain'
+    $uri = "$maestroInstallation/api/default-channels?repository=$repoUri&branch=$branch&api-version=${barApiVersion}"
+    $response = Invoke-WebRequest -Uri $uri -Headers $headers -Method Get
+    $jsonResponse = $response | ConvertFrom-Json
+    return $jsonResponse
+}
+
 function Darc-Delete-Subscription($subscriptionId) {
-    Darc-Command delete-subscription --id $subscriptionId
+    Darc-Command delete-subscriptions --id $subscriptionId --quiet
 }
 
 function Darc-Get-Subscription($subscriptionId) {
     Darc-Command get-subscriptions --ids $subscriptionId
+}
+
+function Darc-Get-Subscription-Enabled($subscriptionId) {
+    return $(Darc-Command get-subscriptions --ids $subscriptionId) -match "- Enabled: True"
 }
 
 function Darc-Add-Subscription-Process-Output($output) {
@@ -268,15 +282,21 @@ function Darc-Add-Subscription-Process-Output($output) {
 }
 
 # Run darc add-subscription with the specified parameters, extract out the subscription id,
-# and record it for teardown later. Implicitly passes -q
+# and record it for teardown later. Implicitly passes -q and --no-trigger
 function Darc-Add-Subscription([Parameter(ValueFromRemainingArguments=$true)]$darcParams) {
-    $darcParams = @( "add-subscription" ) + $darcParams + @( "-q" )
+    $darcParams = @( "add-subscription" ) + $darcParams + @( "-q", "--no-trigger" )
+    $output = Darc-Command -darcParams $darcParams
+    Darc-Add-Subscription-Process-Output $output
+}
+
+function Darc-Add-Subscription-And-Trigger([Parameter(ValueFromRemainingArguments=$true)]$darcParams) {
+    $darcParams = @( "add-subscription" ) + $darcParams + @( "-q", "--trigger" )
     $output = Darc-Command -darcParams $darcParams
     Darc-Add-Subscription-Process-Output $output
 }
 
 function Darc-Add-Subscription-From-Yaml($yamlText) {
-    $darcParams = @( "add-subscription", "--read-stdin" )
+    $darcParams = @( "add-subscription", "--read-stdin", "--no-trigger" )
     $output = $yamlText | Darc-Command-WithPipeline -darcParams $darcParams
     Darc-Add-Subscription-Process-Output $output
 }
@@ -307,12 +327,20 @@ function Add-Build-To-Channel ($buildId, $channelName) {
     $channelId = Get-ChannelId $channelName
 
     Write-Host "Adding build ${buildId} to channel ${channelId}"
-    $headers = Get-Bar-Headers 'text/plain'
-    $uri = "$maestroInstallation/api/channels/${channelId}/builds/${buildId}?api-version=${barApiVersion}"
-    Invoke-WebRequest -Uri $uri -Headers $headers -Method Post
+    $darcParams = @("add-build-to-channel", "--id", "$buildId", "--channel", "$channelName", "--skip-assets-publishing" )
+    Darc-Command -darcParams $darcParams
 }
 
-function New-Build($repository, $branch, $commit, $buildNumber, $assets, $publishUsingPipelines) {
+function Remove-Build-From-Channel ($buildId, $channelName) {
+    # Look up the channel id
+    $channelId = Get-ChannelId $channelName
+
+    Write-Host "Removing build ${buildId} from channel ${channelId}"
+    $darcParams = @("delete-build-from-channel", "--id", "$buildId", "--channel", "$channelName" )
+    Darc-Command -darcParams $darcParams
+}
+
+function New-Build($repository, $branch, $commit, $buildNumber, $assets, $publishUsingPipelines, $dependencies) {
     if (!$publishUsingPipelines) {
         $publishUsingPipelines = "false"
     }
@@ -330,6 +358,7 @@ function New-Build($repository, $branch, $commit, $buildNumber, $assets, $publis
         azureDevOpsBuildDefinitionId = 6;
         commit = $commit;
         assets = $assets;
+        dependencies = $dependencies;
         publishUsingPipelines = $publishUsingPipelines;
     }
     $bodyJson = ConvertTo-Json $body -Depth 4
@@ -358,6 +387,15 @@ function Get-Build($id) {
     $response
 }
 
+function Darc-Get-Build($id) {
+    $darcParams = @( "get-build", "--id", "$id" )
+    Darc-Command -darcParams $darcParams
+}
+function Darc-Update-Build($id, $updateParams) {
+    $darcParams = @( "update-build", "--id", "$id" ) + $updateParams
+    Darc-Command -darcParams $darcParams
+}
+
 function Get-Bar-Headers([string]$accept) {
     $headers = New-Object 'System.Collections.Generic.Dictionary[[String],[String]]'
     $headers.Add('Accept', $accept)
@@ -376,8 +414,9 @@ function Git-Command($repoName) {
         if ($gitParams.GetType().Name -ne "Object[]") {
             $gitParams = $gitParams.ToString().Split(" ")
         }
-        Write-Host "Running $baseGitCommand from $(Get-Location)"
+        Write-Host "Running 'git $gitParams' from $(Get-Location)"
         $commandOutput = & git @gitParams; if ($LASTEXITCODE -ne 0) { throw "Git exited with exit code: $LASTEXITCODE" } else { $commandOutput }
+        $commandOutput
     }
     finally {
         Pop-Location
@@ -479,6 +518,11 @@ function Get-AzDO-PullRequests($targetRepoName, $targetBranch) {
     Invoke-WebRequest -Uri $uri -Headers $(Get-AzDO-Headers) -Method Get | ConvertFrom-Json
 }
 
+function Get-AzDO-PullRequest($targetRepoName, $prId) {
+    $uri = "$(Get-AzDO-RepoApiUri($targetRepoName))/pullrequests/${prId}?api-version=${azdoApiVersion}"
+    Invoke-WebRequest -Uri $uri -Headers $(Get-AzDO-Headers) -Method Get | ConvertFrom-Json
+}
+
 function Check-AzDO-PullRequest-Completed($targetRepoName, $pullRequestNumber) {
     $uri = "$(Get-AzDO-RepoApiUri($targetRepoName))/pullrequests/$pullRequestNumber"
     $tries = 7
@@ -517,12 +561,12 @@ function Check-AzDO-PullRequest-Created($targetRepoName, $targetBranch) {
 
 function Compare-Array-Output($expected, $actual) {
     if ($expected.Count -ne $actual.Count) {
-        Write-Error "Expected $($expected.Count) lines, got $($actual.Count) lines."
+        Write-Host "Expected $($expected.Count) lines, got $($actual.Count) lines."
         return $false
     }
     for ($i = 0; $i -lt $expected.Count; $i++) {
         if ($actual[$i] -notmatch $expected[$i]) {
-            Write-Error "Line $i not matched`nExpected '$($expected[$i])'`nActual   '$($actual[$i])'"
+            Write-Host "Line $i not matched`nExpected '$($expected[$i])'`nActual   '$($actual[$i])'"
             return $false
         }
     }
@@ -532,27 +576,25 @@ function Compare-Array-Output($expected, $actual) {
 function Validate-AzDO-PullRequest-Contents($pullRequest, $expectedPRTitle, $targetRepoName, $targetBranch, $expectedDependencies) {
     $pullRequestBaseBranch = $pullRequest.sourceRefName.Replace('refs/heads/','')
 
-    if ($pullRequest.title -ne $expectedPRTitle) {
+    # Depending on how quickly each dependency update comes through,
+    # we might have to wait for the title to be updated correctly for batched Subscriptions.
+    $tries = 5
+    $validTitle = $false;
+    while ($tries-- -gt 0 -and (-not $validTitle)) {
+        Write-Host "Validating PR title. $tries tries remaining..."
+        $pullRequest = Get-AzDO-PullRequest $targetRepoName $pullRequest.pullRequestId
+        if ($pullRequest.title -eq $expectedPRTitle) {
+            $validTitle = $true
+            break
+        }
+        Start-Sleep 30
+    }
+
+    if (-not $validTitle) {
         throw "Expected PR title to be $expectedPRTitle, was $($pullrequest.title)"
     }
 
-    # Check out the merge commit sha, then use darc to get and verify the
-    # dependencies
-    Git-Command $targetRepoName fetch
-    Git-Command $targetRepoName checkout $pullRequestBaseBranch
-
-    try {
-        Push-Location -Path $(Get-Repo-Location $targetRepoName)
-        $dependencies = Darc-Command get-dependencies 
-        $equal = Compare-Array-Output $expectedDependencies $dependencies
-        if (-not $equal) {
-            throw "PR did not have expected dependency updates."
-        }
-        Write-Host "Finished validating PR contents"
-        return $true
-    } finally {
-        Pop-Location
-    }
+    Validate-PullRequest-Dependencies $targetRepoName $pullRequestBaseBranch $expectedDependencies 1
 }
 
 function Validate-Feeds-NugetConfig($targetRepoName, $expectedFeeds, $notExpectedFeeds) {
@@ -730,6 +772,11 @@ function Get-GitHub-PullRequests($targetRepoName, $targetBranch) {
     Invoke-WebRequest -Uri $uri -Headers $(Get-Github-Headers) -Method Get | ConvertFrom-Json
 }
 
+function Get-GitHub-PullRequest($targetRepoName, $prId) {
+    $uri = "$(Get-Github-RepoApiUri($targetRepoName))/pulls/$prId"
+    Invoke-WebRequest -Uri $uri -Headers $(Get-Github-Headers) -Method Get | ConvertFrom-Json
+}
+
 function Get-Github-File-Contents($targetRepoName, $path, $ref) {
     $uri = "$(Get-Github-RepoApiUri($targetRepoName))/contents/${path}?ref=$ref"
     Invoke-WebRequest -Uri $uri -Headers $(Get-Github-Headers) -Method Get | ConvertFrom-Json
@@ -778,34 +825,51 @@ function Check-Github-PullRequest-Created($targetRepoName, $targetBranch) {
 }
 
 function Validate-Github-PullRequest-Contents($pullRequest, $expectedPRTitle, $targetRepoName, $targetBranch, $expectedDependencies) {
-    $pullRequestBaseBranch = $pullRequest.head.ref
-    if ($pullRequest.title -ne $expectedPRTitle) {
+    # Depending on how quickly each dependency update comes through,
+    # we might have to wait for the title to be updated correctly for batched Subscriptions
+    $tries = 5
+    $validTitle = $false;
+    while ($tries-- -gt 0) {
+        Write-Host "Validating PR title. $tries tries remaining..."
+        $pullRequest = Get-GitHub-PullRequest $targetRepoName $pullRequest.number
+        if ($pullRequest.title -eq $expectedPRTitle) {
+            $validTitle = $true
+            break
+        }
+        Start-Sleep 30
+    }
+
+    if (-not $validTitle) {
         throw "Expected PR title to be $expectedPRTitle, was $($pullrequest.title)"
     }
 
-    # Check out the merge commit sha, then use darc to get and verify the
-    # dependencies
-    Git-Command $targetRepoName fetch
-    Git-Command $targetRepoName checkout $pullRequestBaseBranch
-    try {
-        Push-Location -Path $(Get-Repo-Location $targetRepoName)
-        $dependencies = Darc-Command  get-dependencies 
+    Validate-PullRequest-Dependencies $targetRepoName $pullRequest.head.ref $expectedDependencies 1
+}
 
-        if ($dependencies.Count -ne $expectedDependencies.Count) {
-            Write-Error "Expected $($expectedDependencies.Count) dependencies, Actual $($dependencies.Count) dependencies."
-            throw "PR did not have expected dependency updates."
-        }
+function Validate-PullRequest-Dependencies($targetRepoName, $pullRequestBaseBranch, $expectedDependencies, $tries) {
+    $triesRemaining = $tries
+    while ($triesRemaining-- -gt 0) {
+        # Check out the merge commit sha, then use darc to get and verify the
+        # dependencies
+        Git-Command $targetRepoName fetch
+        Git-Command $targetRepoName checkout $pullRequestBaseBranch
+        Git-Command $targetRepoName pull
 
-        for ($i = 0; $i -lt $expectedDependencies.Count; $i++) {
-            if ($dependencies[$i] -notmatch $expectedDependencies[$i]) {
-                Write-Error "Dependencies Line $i not matched`nExpected $($expectedDependencies[$i])`nActual $($dependencies[$i])"
-                throw "PR did not have expected dependency updates."
+        try {
+            Push-Location -Path $(Get-Repo-Location $targetRepoName)
+            $dependencies = Darc-Command get-dependencies
+            if ($(Compare-Array-Output $expectedDependencies $dependencies)) {
+                Write-Host "Finished validating PR contents"
+                return $true
             }
+        } finally {
+            Pop-Location
         }
-        Write-Host "Finished validating PR contents"
-    } finally {
-        Pop-Location
+
+        Start-Sleep 30
     }
+
+    throw "PR did not have expected dependency updates."
 }
 
 function Check-NonBatched-Github-PullRequest($sourceRepoName, $targetRepoName, $targetBranch, $expectedDependencies, $complete = $false) {
@@ -850,4 +914,15 @@ function Validate-Arcade-PullRequest-Contents($pullRequest, $expectedPRTitle, $t
 function Get-ArcadeRepoUri
 {
     "https://github.com/dotnet/arcade"
+}
+
+# Run darc add-goal and record the channel for later deletion
+function Darc-Set-Goal($channel, $definitionId, $minutes) {
+    $darcParams = @("set-goal", "--channel", "$channel", "--definition-id", "$definitionId", "--minutes" , "$minutes")
+    Darc-Command -darcParams $darcParams
+}
+
+function Darc-Get-Goal($channel, $definitionId) {
+    $darcParams = @("get-goal", "--channel", "$channel", "--definition-id", "$definitionId")
+    Darc-Command -darcParams $darcParams
 }

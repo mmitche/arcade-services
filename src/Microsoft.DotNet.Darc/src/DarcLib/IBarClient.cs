@@ -22,7 +22,7 @@ namespace Microsoft.DotNet.DarcLib
         /// </summary>
         /// <param name="sourceRepo">Filter by the source repository of the subscription.</param>
         /// <param name="targetRepo">Filter by the target repository of the subscription.</param>
-        /// <param name="channelId">Filter by the target channel id of the subscription.</param>
+        /// <param name="channelId">Filter by the source channel id of the subscription.</param>
         /// <returns>Set of subscription.</returns>
         Task<IEnumerable<Subscription>> GetSubscriptionsAsync(
             string sourceRepo = null,
@@ -113,6 +113,13 @@ namespace Microsoft.DotNet.DarcLib
         /// <param name="channel">Channel name.</param>
         /// <returns>Channel or null if not found.</returns>
         Task<Channel> GetChannelAsync(string channel);
+
+        /// <summary>
+        ///     Retrieve a specific channel by id.
+        /// </summary>
+        /// <param name="channel">Channel id.</param>
+        /// <returns>Channel or null if not found.</returns>
+        Task<Channel> GetChannelAsync(int channelId);
 
         /// <summary>
         ///     Retrieve a set of default channel associations based on the provided filters.
@@ -221,8 +228,53 @@ namespace Microsoft.DotNet.DarcLib
         /// <param name="buildId">Build id</param>
         /// <param name="channelId">Channel id</param>
         /// <returns>Async task</returns>
-        Task AssignBuildToChannel(int buildId, int channelId);
+        Task AssignBuildToChannelAsync(int buildId, int channelId);
+
+        /// <summary>
+        ///     Remove a particular build from a channel
+        /// </summary>
+        /// <param name="buildId">Build id</param>
+        /// <param name="channelId">Channel id</param>
+        /// <returns>Async task</returns>
+        Task DeleteBuildFromChannelAsync(int buildId, int channelId);
+
+        /// <summary>
+        ///     Update an existing build.
+        /// </summary>
+        /// <param name="buildId">Build to update</param>
+        /// <param name="buildUpdate">Updated build info</param>
+        Task<Build> UpdateBuildAsync(int buildId, BuildUpdate buildUpdate);
 
         #endregion
+
+
+        #region Goal Operations
+        /// <summary>
+        ///     Creates a new goal or updates the existing goal (in minutes) for a Defintion in a Channel.
+        /// </summary>
+        /// <param name="channel">Name of channel. For eg: .Net Core 5 Dev</param>
+        /// <param name="definitionId">Azure DevOps DefinitionId.</param>
+        /// <param name="minutes">Goal in minutes for a Definition in a Channel.</param>
+        /// <returns>Async task.</returns>
+        Task<Goal> SetGoalAsync(string channel, int definitionId, int minutes);
+
+        /// <summary>
+        ///     Gets goal (in minutes) for a Defintion in a Channel.
+        /// </summary>
+        /// <param name="channel">Name of channel. For eg: .Net Core 5 Dev</param>
+        /// <param name="definitionId">Azure DevOps DefinitionId.</param>
+        /// <returns>Returns Goal in minutes.</returns>
+        Task<Goal> GetGoalAsync(string channel, int definitionId);
+
+        /// <summary>
+        ///     Gets official and pr build time (in minutes) for a default channel summarized over a number of days.
+        /// </summary>
+        /// <param name="defaultChannelId">Id of the default channel</param>
+        /// <param name="days">Number of days to summarize over</param>
+        /// <returns>Returns BuildTime in minutes.</returns>
+        Task<BuildTime> GetBuildTimeAsync(int defaultChannelId, int days);
+
+        #endregion
+
     }
 }

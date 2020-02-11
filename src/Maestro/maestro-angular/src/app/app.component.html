@@ -1,6 +1,6 @@
 <ng-template #themePicker>
-  <div ngbDropdown placement="left">
-    <a class="nav-link" style="cursor: pointer;" id="navbarTheme" role="button" ngbDropdownToggle>
+  <div ngbDropdown class="dropdown-item" placement="left">
+    <a style="cursor: pointer;" id="navbarTheme" role="button" ngbDropdownToggle>
       Theme
     </a>
     <div ngbDropdownMenu aria-labelledby="navbarTheme">
@@ -30,8 +30,11 @@
             <a class="nav-link" style="cursor: pointer;" id="navbarDropdown" role="button" ngbDropdownToggle>
               {{userName}} <span class="caret"></span>
             </a>
-            <div ngbDropdownMenu aria-labelledby="navbarDropdown">
+            <div ngbDropdownMenu aria-labelledby="navbarDropdown" style="right: 0; left: auto;">
               <a class="dropdown-item" href="/Account/Tokens">Tokens</a>
+              <a class="dropdown-item" *ngIf="isApiRedirecting" (click)="isApiRedirectSkipped = !isApiRedirectSkipped" style="cursor: pointer;">
+                {{isApiRedirectSkipped ? 'Enable' : 'Disable'}} api redirection
+              </a>
               <ng-container *ngTemplateOutlet="themePicker"></ng-container>
               <div class="dropdown-divider"></div>
               <a class="dropdown-item" href="/Account/SignOut">Sign Out</a>
@@ -49,13 +52,14 @@
     <ng-container *ngIf="userName">
       <ng-container *ngIf="authorized; else: notAuthorized">
         <mc-side-bar [(opened)]="sidebarOpen" [dockedSize]="'45px'" [fullSize]="'250px'" #sideBar></mc-side-bar>
-        <div class="d-flex flex-grow-1 grow-children" style="overflow-y: auto;">
+        <div class="d-flex flex-grow-1 grow-children" style="overflow-y: auto;" role="main">
           <router-outlet class="flex-grow-0"></router-outlet>
         </div>
       </ng-container>
       <ng-template #notAuthorized>
         <div class="d-flex flex-grow-1 grow-children" style="overflow-y: auto;">
-          <p class="p-2">You are not authorized to use this site. If you think you should be able to use this site contact <a href="mailto:dnceng@microsoft.com">dnceng</a>.</p>
+          <p class="p-2">You are not authorized to use this site. If you have not done so yet, please submit a request to join the <a href="https://github.com/orgs/dotnet/teams/arcade-contrib/members">arcade-contrib group on GitHub</a>. After approval, it will take about 15 minutes for those permissions to propagate. </p>
+          <p class="p2">If you have joined the group and are still facing problems, please contact <a href="mailto:dnceng@microsoft.com">dnceng</a>.</p>
         </div>
       </ng-template>
     </ng-container>

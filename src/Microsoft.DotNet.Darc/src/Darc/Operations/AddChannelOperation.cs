@@ -5,12 +5,13 @@
 using Microsoft.DotNet.Darc.Helpers;
 using Microsoft.DotNet.Darc.Options;
 using Microsoft.DotNet.DarcLib;
+using Microsoft.DotNet.Maestro.Client;
 using Microsoft.DotNet.Maestro.Client.Models;
 using Microsoft.Extensions.Logging;
+using Newtonsoft.Json;
 using System;
 using System.Net;
 using System.Threading.Tasks;
-using Microsoft.DotNet.Maestro.Client;
 
 namespace Microsoft.DotNet.Darc.Operations
 {
@@ -42,16 +43,33 @@ namespace Microsoft.DotNet.Darc.Operations
                 }
 
                 Channel newChannelInfo = await remote.CreateChannelAsync(_options.Name, _options.Classification);
-                Console.WriteLine($"Successfully created new channel with name '{_options.Name}'.");
+                switch (_options.OutputFormat)
+                {
+                    case DarcOutputType.json:
+                        Console.WriteLine(JsonConvert.SerializeObject(
+                            new
+                            {
+                                id = newChannelInfo.Id,
+                                name = newChannelInfo.Name,
+                                classification = newChannelInfo.Classification
+                            },
+                            Formatting.Indented));
+                        break;
+                    case DarcOutputType.yaml:
+                        Console.WriteLine($"Successfully created new channel with name '{_options.Name}' and id {newChannelInfo.Id}.");
+                        break;
+                    default:
+                        throw new NotImplementedException($"Output type {_options.OutputFormat} not supported by add-channel");
+                }
 
                 return Constants.SuccessCode;
             }
-            catch (RestApiException e) when (e.Response.StatusCode == HttpStatusCode.Conflict)
+            catch (RestApiException e) when (e.Response.Status == (int) HttpStatusCode.Conflict)
             {
                 Logger.LogError($"An existing channel with name '{_options.Name}' already exists");
                 return Constants.ErrorCode;
             }
-            catch (Exception e) 
+            catch (Exception e)
             {
                 Logger.LogError(e, "Error: Failed to create new channel.");
                 return Constants.ErrorCode;

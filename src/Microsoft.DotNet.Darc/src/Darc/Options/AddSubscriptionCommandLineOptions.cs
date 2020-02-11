@@ -33,7 +33,7 @@ namespace Microsoft.DotNet.Darc.Options
         [Option("batchable", Default = false, HelpText = "The subscription should be initially disabled.")]
         public bool Disabled { get; set; }
 
-        [Option("standard-automerge", HelpText = "Use standard auto-merge policies. GitHub ignores WIP and license/cla checks," +
+        [Option("standard-automerge", HelpText = "Use standard auto-merge policies. GitHub ignores WIP, license/cla and auto-merge.config.enforce checks," +
             "Azure DevOps ignores comment, reviewer and work item linking. Both will not auto-merge if changes are requested.")]
         public bool StandardAutoMergePolicies { get; set; }
 
@@ -55,6 +55,12 @@ namespace Microsoft.DotNet.Darc.Options
 
         [Option("read-stdin", HelpText = "Interactive mode style (YAML), but read input from stdin. Implies -q")]
         public bool ReadStandardIn { get; set; }
+
+        [Option("trigger", SetName = "trigger", HelpText = "Automatically trigger the subscription on creation.")]
+        public bool TriggerOnCreate { get; set; }
+
+        [Option("no-trigger", SetName = "notrigger", HelpText = "Do not trigger the subscription on creation.")]
+        public bool NoTriggerOnCreate { get; set; }
 
         public override Operation GetOperation()
         {

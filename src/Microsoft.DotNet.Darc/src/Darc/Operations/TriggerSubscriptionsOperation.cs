@@ -46,7 +46,7 @@ namespace Microsoft.DotNet.Darc.Operations
                         Subscription subscription = await remote.GetSubscriptionAsync(_options.Id);
                         subscriptionsToTrigger.Add(subscription);
                     }
-                    catch (RestApiException e) when (e.Response.StatusCode == HttpStatusCode.NotFound)
+                    catch (RestApiException e) when (e.Response.Status == (int) HttpStatusCode.NotFound)
                     {
                         Console.WriteLine($"Subscription with id '{_options.Id}' was not found.");
                         return Constants.ErrorCode;
@@ -54,21 +54,15 @@ namespace Microsoft.DotNet.Darc.Operations
                 }
                 else
                 {
-                    if (string.IsNullOrEmpty(_options.TargetRepository) &&
-                        string.IsNullOrEmpty(_options.TargetBranch) &&
-                        string.IsNullOrEmpty(_options.SourceRepository) &&
-                        string.IsNullOrEmpty(_options.Channel))
+                    if (!_options.HasAnyFilters())
                     {
                         Console.WriteLine($"Please specify one or more filters to select which subscriptions should be triggered (see help).");
                         return Constants.ErrorCode;
                     }
 
-                    IEnumerable<Subscription> subscriptions = (await remote.GetSubscriptionsAsync()).Where(subscription =>
-                    {
-                        return _options.SubcriptionFilter(subscription);
-                    });
+                    IEnumerable<Subscription> subscriptions = await _options.FilterSubscriptions(remote);
 
-                    if (subscriptions.Count() == 0)
+                    if (!subscriptions.Any())
                     {
                         Console.WriteLine("No subscriptions found matching the specified criteria.");
                         return Constants.ErrorCode;
@@ -86,17 +80,7 @@ namespace Microsoft.DotNet.Darc.Operations
                         Console.WriteLine($"  {UxHelpers.GetSubscriptionDescription(subscription)}");
                     }
 
-                    char keyChar;
-                    do
-                    {
-                        Console.Write("Continue? (y/n) ");
-                        ConsoleKeyInfo keyInfo = Console.ReadKey();
-                        keyChar = char.ToUpperInvariant(keyInfo.KeyChar);
-                        Console.WriteLine();
-                    }
-                    while (keyChar != 'Y' && keyChar != 'N');
-
-                    if (keyChar == 'N')
+                    if (!UxHelpers.PromptForYesNo("Continue?"))
                     {
                         Console.WriteLine($"No subscriptions triggered, exiting.");
                         return Constants.ErrorCode;
@@ -113,7 +97,7 @@ namespace Microsoft.DotNet.Darc.Operations
                     }
                     await remote.TriggerSubscriptionAsync(subscription.Id.ToString());
                 }
-                Console.WriteLine($"done");
+                Console.WriteLine("done");
 
                 return Constants.SuccessCode;
             }

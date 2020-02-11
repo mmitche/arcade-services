@@ -1,19 +1,29 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
-using System.Net.Http;
-using System.Net.Http.Headers;
+using System.IO;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Rest;
-using Microsoft.DotNet.Maestro.Client.Models;
+using Azure;
+using Azure.Core;
+
+
 
 namespace Microsoft.DotNet.Maestro.Client
 {
     public partial interface IAssets
     {
-        Task<PagedResponse<Asset>> ListAssetsAsync(
+        AsyncPageable<Models.Asset> ListAssetsAsync(
+            int? buildId = default,
+            bool? loadLocations = default,
+            string name = default,
+            bool? nonShipping = default,
+            string version = default,
+            CancellationToken cancellationToken = default
+        );
+
+        Task<Page<Models.Asset>> ListAssetsPageAsync(
             int? buildId = default,
             bool? loadLocations = default,
             string name = default,
@@ -28,14 +38,14 @@ namespace Microsoft.DotNet.Maestro.Client
             CancellationToken cancellationToken = default
         );
 
-        Task<Asset> GetAssetAsync(
+        Task<Models.Asset> GetAssetAsync(
             int id,
             CancellationToken cancellationToken = default
         );
 
-        Task<AssetLocation> AddAssetLocationToAssetAsync(
+        Task<Models.AssetLocation> AddAssetLocationToAssetAsync(
             int assetId,
-            AddAssetLocationToAssetAssetLocationType assetLocationType,
+            Models.AddAssetLocationToAssetAssetLocationType assetLocationType,
             string location,
             CancellationToken cancellationToken = default
         );
@@ -61,7 +71,58 @@ namespace Microsoft.DotNet.Maestro.Client
 
         partial void HandleFailedListAssetsRequest(RestApiException ex);
 
-        public async Task<PagedResponse<Asset>> ListAssetsAsync(
+        public AsyncPageable<Models.Asset> ListAssetsAsync(
+            int? buildId = default,
+            bool? loadLocations = default,
+            string name = default,
+            bool? nonShipping = default,
+            string version = default,
+            CancellationToken cancellationToken = default
+        )
+        {
+            async IAsyncEnumerable<Page<Models.Asset>> GetPages(string _continueToken, int? _pageSizeHint)
+            {
+                int? page = 1;
+                int? perPage = _pageSizeHint;
+
+                if (!string.IsNullOrEmpty(_continueToken))
+                {
+                    page = int.Parse(_continueToken);
+                }
+
+                while (true)
+                {
+                    Page<Models.Asset> _page = null;
+
+                    try {
+                        _page = await ListAssetsPageAsync(
+                            buildId,
+                            loadLocations,
+                            name,
+                            nonShipping,
+                            page,
+                            perPage,
+                            version,
+                            cancellationToken
+                        ).ConfigureAwait(false);
+                        if (_page.Values.Count < 1)
+                        {
+                            yield break;
+                        }                   
+                    }
+                    catch (RestApiException e) when (e.Response.Status == 404)
+                    {
+                        yield break;
+                    }
+
+                    yield return _page;
+                    page++;
+                }
+            }
+            return AsyncPageable.Create(GetPages);
+        }
+
+        public async Task<Page<Models.Asset>> ListAssetsPageAsync(
             int? buildId = default,
             bool? loadLocations = default,
             string name = default,
@@ -72,116 +133,95 @@ namespace Microsoft.DotNet.Maestro.Client
             CancellationToken cancellationToken = default
         )
         {
-            using (var _res = await ListAssetsInternalAsync(
-                buildId,
-                loadLocations,
-                name,
-                nonShipping,
-                page,
-                perPage,
-                version,
-                cancellationToken
-            ).ConfigureAwait(false))
+
+            const string apiVersion = "2019-01-16";
+
+            var _baseUri = Client.Options.BaseUri;
+            var _url = new RequestUriBuilder();
+            _url.Reset(_baseUri);
+            _url.AppendPath(
+                "/api/assets",
+                false);
+
+            if (!string.IsNullOrEmpty(name))
             {
-                return new PagedResponse<Asset>(Client, OnListAssetsFailed, _res);
+                _url.AppendQuery("name", Client.Serialize(name));
+            }
+            if (!string.IsNullOrEmpty(version))
+            {
+                _url.AppendQuery("version", Client.Serialize(version));
+            }
+            if (buildId != default(int?))
+            {
+                _url.AppendQuery("buildId", Client.Serialize(buildId));
+            }
+            if (nonShipping != default(bool?))
+            {
+                _url.AppendQuery("nonShipping", Client.Serialize(nonShipping));
+            }
+            if (loadLocations != default(bool?))
+            {
+                _url.AppendQuery("loadLocations", Client.Serialize(loadLocations));
+            }
+            if (page != default(int?))
+            {
+                _url.AppendQuery("page", Client.Serialize(page));
+            }
+            if (perPage != default(int?))
+            {
+                _url.AppendQuery("perPage", Client.Serialize(perPage));
+            }
+            _url.AppendQuery("api-version", Client.Serialize(apiVersion));
+
+
+            using (var _req = Client.Pipeline.CreateRequest())
+            {
+                _req.Uri = _url;
+                _req.Method = RequestMethod.Get;
+
+                using (var _res = await Client.SendAsync(_req, cancellationToken).ConfigureAwait(false))
+                {
+                    if (_res.Status < 200 || _res.Status >= 300)
+                    {
+                        await OnListAssetsFailed(_req, _res).ConfigureAwait(false);
+                    }
+
+                    if (_res.ContentStream == null)
+                    {
+                        await OnListAssetsFailed(_req, _res).ConfigureAwait(false);
+                    }
+
+                    using (var _reader = new StreamReader(_res.ContentStream))
+                    {
+                        var _content = await _reader.ReadToEndAsync().ConfigureAwait(false);
+                        var _body = Client.Deserialize<IImmutableList<Models.Asset>>(_content);
+                        return Page<Models.Asset>.FromValues(_body, (page + 1).ToString(), _res);
+                    }
+                }
             }
         }
 
-        internal async Task OnListAssetsFailed(HttpRequestMessage req, HttpResponseMessage res)
+        internal async Task OnListAssetsFailed(Request req, Response res)
         {
-            var content = await res.Content.ReadAsStringAsync().ConfigureAwait(false);
-            var ex = new RestApiException<ApiError>(
-                new HttpRequestMessageWrapper(req, null),
-                new HttpResponseMessageWrapper(res, content),
-                Client.Deserialize<ApiError>(content)
+            string content = null;
+            if (res.ContentStream != null)
+            {
+                using (var reader = new StreamReader(res.ContentStream))
+                {
+                    content = await reader.ReadToEndAsync().ConfigureAwait(false);
+                }
+            }
+
+            var ex = new RestApiException<Models.ApiError>(
+                req,
+                res,
+                content,
+                Client.Deserialize<Models.ApiError>(content)
                 );
             HandleFailedListAssetsRequest(ex);
             HandleFailedRequest(ex);
             Client.OnFailedRequest(ex);
             throw ex;
-        }
-
-        internal async Task<HttpOperationResponse<IImmutableList<Asset>>> ListAssetsInternalAsync(
-            int? buildId = default,
-            bool? loadLocations = default,
-            string name = default,
-            bool? nonShipping = default,
-            int? page = default,
-            int? perPage = default,
-            string version = default,
-            CancellationToken cancellationToken = default
-        )
-        {
-            const string apiVersion = "2019-01-16";
-
-            var _path = "/api/assets";
-
-            var _query = new QueryBuilder();
-            if (!string.IsNullOrEmpty(name))
-            {
-                _query.Add("name", Client.Serialize(name));
-            }
-            if (!string.IsNullOrEmpty(version))
-            {
-                _query.Add("version", Client.Serialize(version));
-            }
-            if (buildId != default)
-            {
-                _query.Add("buildId", Client.Serialize(buildId));
-            }
-            if (nonShipping != default)
-            {
-                _query.Add("nonShipping", Client.Serialize(nonShipping));
-            }
-            if (loadLocations != default)
-            {
-                _query.Add("loadLocations", Client.Serialize(loadLocations));
-            }
-            if (page != default)
-            {
-                _query.Add("page", Client.Serialize(page));
-            }
-            if (perPage != default)
-            {
-                _query.Add("perPage", Client.Serialize(perPage));
-            }
-            _query.Add("api-version", Client.Serialize(apiVersion));
-
-            var _uriBuilder = new UriBuilder(Client.BaseUri);
-            _uriBuilder.Path = _uriBuilder.Path.TrimEnd('/') + _path;
-            _uriBuilder.Query = _query.ToString();
-            var _url = _uriBuilder.Uri;
-
-            HttpRequestMessage _req = null;
-            HttpResponseMessage _res = null;
-            try
-            {
-                _req = new HttpRequestMessage(HttpMethod.Get, _url);
-
-                if (Client.Credentials != null)
-                {
-                    await Client.Credentials.ProcessHttpRequestAsync(_req, cancellationToken).ConfigureAwait(false);
-                }
-
-                _res = await Client.SendAsync(_req, cancellationToken).ConfigureAwait(false);
-                if (!_res.IsSuccessStatusCode)
-                {
-                    await OnListAssetsFailed(_req, _res);
-                }
-                string _responseContent = await _res.Content.ReadAsStringAsync().ConfigureAwait(false);
-                return new HttpOperationResponse<IImmutableList<Asset>>
-                {
-                    Request = _req,
-                    Response = _res,
-                    Body = Client.Deserialize<IImmutableList<Asset>>(_responseContent),
-                };
-            }
-            catch (Exception)
-            {
-                _req?.Dispose();
-                _res?.Dispose();
-                throw;
-            }
         }
 
         partial void HandleFailedGetDarcVersionRequest(RestApiException ex);
@@ -190,21 +230,62 @@ namespace Microsoft.DotNet.Maestro.Client
             CancellationToken cancellationToken = default
         )
         {
-            using (var _res = await GetDarcVersionInternalAsync(
-                cancellationToken
-            ).ConfigureAwait(false))
+
+            const string apiVersion = "2019-01-16";
+
+            var _baseUri = Client.Options.BaseUri;
+            var _url = new RequestUriBuilder();
+            _url.Reset(_baseUri);
+            _url.AppendPath(
+                "/api/assets/darc-version",
+                false);
+
+            _url.AppendQuery("api-version", Client.Serialize(apiVersion));
+
+
+            using (var _req = Client.Pipeline.CreateRequest())
             {
-                return _res.Body;
+                _req.Uri = _url;
+                _req.Method = RequestMethod.Get;
+
+                using (var _res = await Client.SendAsync(_req, cancellationToken).ConfigureAwait(false))
+                {
+                    if (_res.Status < 200 || _res.Status >= 300)
+                    {
+                        await OnGetDarcVersionFailed(_req, _res).ConfigureAwait(false);
+                    }
+
+                    if (_res.ContentStream == null)
+                    {
+                        await OnGetDarcVersionFailed(_req, _res).ConfigureAwait(false);
+                    }
+
+                    using (var _reader = new StreamReader(_res.ContentStream))
+                    {
+                        var _content = await _reader.ReadToEndAsync().ConfigureAwait(false);
+                        var _body = Client.Deserialize<string>(_content);
+                        return _body;
+                    }
+                }
             }
         }
 
-        internal async Task OnGetDarcVersionFailed(HttpRequestMessage req, HttpResponseMessage res)
+        internal async Task OnGetDarcVersionFailed(Request req, Response res)
         {
-            var content = await res.Content.ReadAsStringAsync().ConfigureAwait(false);
-            var ex = new RestApiException<ApiError>(
-                new HttpRequestMessageWrapper(req, null),
-                new HttpResponseMessageWrapper(res, content),
-                Client.Deserialize<ApiError>(content)
+            string content = null;
+            if (res.ContentStream != null)
+            {
+                using (var reader = new StreamReader(res.ContentStream))
+                {
+                    content = await reader.ReadToEndAsync().ConfigureAwait(false);
+                }
+            }
+
+            var ex = new RestApiException<Models.ApiError>(
+                req,
+                res,
+                content,
+                Client.Deserialize<Models.ApiError>(content)
                 );
             HandleFailedGetDarcVersionRequest(ex);
             HandleFailedRequest(ex);
@@ -212,77 +293,74 @@ namespace Microsoft.DotNet.Maestro.Client
             throw ex;
         }
 
-        internal async Task<HttpOperationResponse<string>> GetDarcVersionInternalAsync(
-            CancellationToken cancellationToken = default
-        )
-        {
-            const string apiVersion = "2019-01-16";
-
-            var _path = "/api/assets/darc-version";
-
-            var _query = new QueryBuilder();
-            _query.Add("api-version", Client.Serialize(apiVersion));
-
-            var _uriBuilder = new UriBuilder(Client.BaseUri);
-            _uriBuilder.Path = _uriBuilder.Path.TrimEnd('/') + _path;
-            _uriBuilder.Query = _query.ToString();
-            var _url = _uriBuilder.Uri;
-
-            HttpRequestMessage _req = null;
-            HttpResponseMessage _res = null;
-            try
-            {
-                _req = new HttpRequestMessage(HttpMethod.Get, _url);
-
-                if (Client.Credentials != null)
-                {
-                    await Client.Credentials.ProcessHttpRequestAsync(_req, cancellationToken).ConfigureAwait(false);
-                }
-
-                _res = await Client.SendAsync(_req, cancellationToken).ConfigureAwait(false);
-                if (!_res.IsSuccessStatusCode)
-                {
-                    await OnGetDarcVersionFailed(_req, _res);
-                }
-                string _responseContent = await _res.Content.ReadAsStringAsync().ConfigureAwait(false);
-                return new HttpOperationResponse<string>
-                {
-                    Request = _req,
-                    Response = _res,
-                    Body = Client.Deserialize<string>(_responseContent),
-                };
-            }
-            catch (Exception)
-            {
-                _req?.Dispose();
-                _res?.Dispose();
-                throw;
-            }
-        }
-
         partial void HandleFailedGetAssetRequest(RestApiException ex);
 
-        public async Task<Asset> GetAssetAsync(
+        public async Task<Models.Asset> GetAssetAsync(
             int id,
             CancellationToken cancellationToken = default
         )
         {
-            using (var _res = await GetAssetInternalAsync(
-                id,
-                cancellationToken
-            ).ConfigureAwait(false))
+
+            if (id == default(int))
             {
-                return _res.Body;
+                throw new ArgumentNullException(nameof(id));
+            }
+
+            const string apiVersion = "2019-01-16";
+
+            var _baseUri = Client.Options.BaseUri;
+            var _url = new RequestUriBuilder();
+            _url.Reset(_baseUri);
+            _url.AppendPath(
+                "/api/assets/{id}".Replace("{id}", Uri.EscapeDataString(Client.Serialize(id))),
+                false);
+
+            _url.AppendQuery("api-version", Client.Serialize(apiVersion));
+
+
+            using (var _req = Client.Pipeline.CreateRequest())
+            {
+                _req.Uri = _url;
+                _req.Method = RequestMethod.Get;
+
+                using (var _res = await Client.SendAsync(_req, cancellationToken).ConfigureAwait(false))
+                {
+                    if (_res.Status < 200 || _res.Status >= 300)
+                    {
+                        await OnGetAssetFailed(_req, _res).ConfigureAwait(false);
+                    }
+
+                    if (_res.ContentStream == null)
+                    {
+                        await OnGetAssetFailed(_req, _res).ConfigureAwait(false);
+                    }
+
+                    using (var _reader = new StreamReader(_res.ContentStream))
+                    {
+                        var _content = await _reader.ReadToEndAsync().ConfigureAwait(false);
+                        var _body = Client.Deserialize<Models.Asset>(_content);
+                        return _body;
+                    }
+                }
             }
         }
 
-        internal async Task OnGetAssetFailed(HttpRequestMessage req, HttpResponseMessage res)
+        internal async Task OnGetAssetFailed(Request req, Response res)
         {
-            var content = await res.Content.ReadAsStringAsync().ConfigureAwait(false);
-            var ex = new RestApiException<ApiError>(
-                new HttpRequestMessageWrapper(req, null),
-                new HttpResponseMessageWrapper(res, content),
-                Client.Deserialize<ApiError>(content)
+            string content = null;
+            if (res.ContentStream != null)
+            {
+                using (var reader = new StreamReader(res.ContentStream))
+                {
+                    content = await reader.ReadToEndAsync().ConfigureAwait(false);
+                }
+            }
+
+            var ex = new RestApiException<Models.ApiError>(
+                req,
+                res,
+                content,
+                Client.Deserialize<Models.ApiError>(content)
                 );
             HandleFailedGetAssetRequest(ex);
             HandleFailedRequest(ex);
@@ -290,108 +368,22 @@ namespace Microsoft.DotNet.Maestro.Client
             throw ex;
         }
 
-        internal async Task<HttpOperationResponse<Asset>> GetAssetInternalAsync(
-            int id,
-            CancellationToken cancellationToken = default
-        )
-        {
-            if (id == default)
-            {
-                throw new ArgumentNullException(nameof(id));
-            }
-
-            const string apiVersion = "2019-01-16";
-
-            var _path = "/api/assets/{id}";
-            _path = _path.Replace("{id}", Client.Serialize(id));
-
-            var _query = new QueryBuilder();
-            _query.Add("api-version", Client.Serialize(apiVersion));
-
-            var _uriBuilder = new UriBuilder(Client.BaseUri);
-            _uriBuilder.Path = _uriBuilder.Path.TrimEnd('/') + _path;
-            _uriBuilder.Query = _query.ToString();
-            var _url = _uriBuilder.Uri;
-
-            HttpRequestMessage _req = null;
-            HttpResponseMessage _res = null;
-            try
-            {
-                _req = new HttpRequestMessage(HttpMethod.Get, _url);
-
-                if (Client.Credentials != null)
-                {
-                    await Client.Credentials.ProcessHttpRequestAsync(_req, cancellationToken).ConfigureAwait(false);
-                }
-
-                _res = await Client.SendAsync(_req, cancellationToken).ConfigureAwait(false);
-                if (!_res.IsSuccessStatusCode)
-                {
-                    await OnGetAssetFailed(_req, _res);
-                }
-                string _responseContent = await _res.Content.ReadAsStringAsync().ConfigureAwait(false);
-                return new HttpOperationResponse<Asset>
-                {
-                    Request = _req,
-                    Response = _res,
-                    Body = Client.Deserialize<Asset>(_responseContent),
-                };
-            }
-            catch (Exception)
-            {
-                _req?.Dispose();
-                _res?.Dispose();
-                throw;
-            }
-        }
-
         partial void HandleFailedAddAssetLocationToAssetRequest(RestApiException ex);
 
-        public async Task<AssetLocation> AddAssetLocationToAssetAsync(
+        public async Task<Models.AssetLocation> AddAssetLocationToAssetAsync(
             int assetId,
-            AddAssetLocationToAssetAssetLocationType assetLocationType,
+            Models.AddAssetLocationToAssetAssetLocationType assetLocationType,
             string location,
             CancellationToken cancellationToken = default
         )
         {
-            using (var _res = await AddAssetLocationToAssetInternalAsync(
-                assetId,
-                assetLocationType,
-                location,
-                cancellationToken
-            ).ConfigureAwait(false))
-            {
-                return _res.Body;
-            }
-        }
 
-        internal async Task OnAddAssetLocationToAssetFailed(HttpRequestMessage req, HttpResponseMessage res)
-        {
-            var content = await res.Content.ReadAsStringAsync().ConfigureAwait(false);
-            var ex = new RestApiException<ApiError>(
-                new HttpRequestMessageWrapper(req, null),
-                new HttpResponseMessageWrapper(res, content),
-                Client.Deserialize<ApiError>(content)
-                );
-            HandleFailedAddAssetLocationToAssetRequest(ex);
-            HandleFailedRequest(ex);
-            Client.OnFailedRequest(ex);
-            throw ex;
-        }
-
-        internal async Task<HttpOperationResponse<AssetLocation>> AddAssetLocationToAssetInternalAsync(
-            int assetId,
-            AddAssetLocationToAssetAssetLocationType assetLocationType,
-            string location,
-            CancellationToken cancellationToken = default
-        )
-        {
-            if (assetId == default)
+            if (assetId == default(int))
             {
                 throw new ArgumentNullException(nameof(assetId));
             }
 
-            if (assetLocationType == default)
+            if (assetLocationType == default(Models.AddAssetLocationToAssetAssetLocationType))
             {
                 throw new ArgumentNullException(nameof(assetLocationType));
             }
@@ -403,55 +395,72 @@ namespace Microsoft.DotNet.Maestro.Client
 
             const string apiVersion = "2019-01-16";
 
-            var _path = "/api/assets/{assetId}/locations";
-            _path = _path.Replace("{assetId}", Client.Serialize(assetId));
+            var _baseUri = Client.Options.BaseUri;
+            var _url = new RequestUriBuilder();
+            _url.Reset(_baseUri);
+            _url.AppendPath(
+                "/api/assets/{assetId}/locations".Replace("{assetId}", Uri.EscapeDataString(Client.Serialize(assetId))),
+                false);
 
-            var _query = new QueryBuilder();
             if (!string.IsNullOrEmpty(location))
             {
-                _query.Add("location", Client.Serialize(location));
+                _url.AppendQuery("location", Client.Serialize(location));
             }
-            if (assetLocationType != default)
+            if (assetLocationType != default(Models.AddAssetLocationToAssetAssetLocationType))
             {
-                _query.Add("assetLocationType", Client.Serialize(assetLocationType));
+                _url.AppendQuery("assetLocationType", Client.Serialize(assetLocationType));
             }
-            _query.Add("api-version", Client.Serialize(apiVersion));
+            _url.AppendQuery("api-version", Client.Serialize(apiVersion));
 
-            var _uriBuilder = new UriBuilder(Client.BaseUri);
-            _uriBuilder.Path = _uriBuilder.Path.TrimEnd('/') + _path;
-            _uriBuilder.Query = _query.ToString();
-            var _url = _uriBuilder.Uri;
 
-            HttpRequestMessage _req = null;
-            HttpResponseMessage _res = null;
-            try
+            using (var _req = Client.Pipeline.CreateRequest())
             {
-                _req = new HttpRequestMessage(HttpMethod.Post, _url);
+                _req.Uri = _url;
+                _req.Method = RequestMethod.Post;
 
-                if (Client.Credentials != null)
+                using (var _res = await Client.SendAsync(_req, cancellationToken).ConfigureAwait(false))
                 {
-                    await Client.Credentials.ProcessHttpRequestAsync(_req, cancellationToken).ConfigureAwait(false);
+                    if (_res.Status < 200 || _res.Status >= 300)
+                    {
+                        await OnAddAssetLocationToAssetFailed(_req, _res).ConfigureAwait(false);
+                    }
+
+                    if (_res.ContentStream == null)
+                    {
+                        await OnAddAssetLocationToAssetFailed(_req, _res).ConfigureAwait(false);
+                    }
+
+                    using (var _reader = new StreamReader(_res.ContentStream))
+                    {
+                        var _content = await _reader.ReadToEndAsync().ConfigureAwait(false);
+                        var _body = Client.Deserialize<Models.AssetLocation>(_content);
+                        return _body;
+                    }
                 }
+            }
+        }
 
-                _res = await Client.SendAsync(_req, cancellationToken).ConfigureAwait(false);
-                if (!_res.IsSuccessStatusCode)
-                {
-                    await OnAddAssetLocationToAssetFailed(_req, _res);
-                }
-                string _responseContent = await _res.Content.ReadAsStringAsync().ConfigureAwait(false);
-                return new HttpOperationResponse<AssetLocation>
-                {
-                    Request = _req,
-                    Response = _res,
-                    Body = Client.Deserialize<AssetLocation>(_responseContent),
-                };
-            }
-            catch (Exception)
+        internal async Task OnAddAssetLocationToAssetFailed(Request req, Response res)
+        {
+            string content = null;
+            if (res.ContentStream != null)
             {
-                _req?.Dispose();
-                _res?.Dispose();
-                throw;
+                using (var reader = new StreamReader(res.ContentStream))
+                {
+                    content = await reader.ReadToEndAsync().ConfigureAwait(false);
+                }
             }
+
+            var ex = new RestApiException<Models.ApiError>(
+                req,
+                res,
+                content,
+                Client.Deserialize<Models.ApiError>(content)
+                );
+            HandleFailedAddAssetLocationToAssetRequest(ex);
+            HandleFailedRequest(ex);
+            Client.OnFailedRequest(ex);
+            throw ex;
         }
 
         partial void HandleFailedRemoveAssetLocationFromAssetRequest(RestApiException ex);
@@ -462,89 +471,68 @@ namespace Microsoft.DotNet.Maestro.Client
             CancellationToken cancellationToken = default
         )
         {
-            using (await RemoveAssetLocationFromAssetInternalAsync(
-                assetId,
-                assetLocationId,
-                cancellationToken
-            ).ConfigureAwait(false))
-            {
-                return;
-            }
-        }
 
-        internal async Task OnRemoveAssetLocationFromAssetFailed(HttpRequestMessage req, HttpResponseMessage res)
-        {
-            var content = await res.Content.ReadAsStringAsync().ConfigureAwait(false);
-            var ex = new RestApiException<ApiError>(
-                new HttpRequestMessageWrapper(req, null),
-                new HttpResponseMessageWrapper(res, content),
-                Client.Deserialize<ApiError>(content)
-                );
-            HandleFailedRemoveAssetLocationFromAssetRequest(ex);
-            HandleFailedRequest(ex);
-            Client.OnFailedRequest(ex);
-            throw ex;
-        }
-
-        internal async Task<HttpOperationResponse> RemoveAssetLocationFromAssetInternalAsync(
-            int assetId,
-            int assetLocationId,
-            CancellationToken cancellationToken = default
-        )
-        {
-            if (assetId == default)
+            if (assetId == default(int))
             {
                 throw new ArgumentNullException(nameof(assetId));
             }
 
-            if (assetLocationId == default)
+            if (assetLocationId == default(int))
             {
                 throw new ArgumentNullException(nameof(assetLocationId));
             }
 
             const string apiVersion = "2019-01-16";
 
-            var _path = "/api/assets/{assetId}/locations/{assetLocationId}";
-            _path = _path.Replace("{assetId}", Client.Serialize(assetId));
-            _path = _path.Replace("{assetLocationId}", Client.Serialize(assetLocationId));
+            var _baseUri = Client.Options.BaseUri;
+            var _url = new RequestUriBuilder();
+            _url.Reset(_baseUri);
+            _url.AppendPath(
+                "/api/assets/{assetId}/locations/{assetLocationId}".Replace("{assetId}", Uri.EscapeDataString(Client.Serialize(assetId))).Replace("{assetLocationId}", Uri.EscapeDataString(Client.Serialize(assetLocationId))),
+                false);
 
-            var _query = new QueryBuilder();
-            _query.Add("api-version", Client.Serialize(apiVersion));
+            _url.AppendQuery("api-version", Client.Serialize(apiVersion));
 
-            var _uriBuilder = new UriBuilder(Client.BaseUri);
-            _uriBuilder.Path = _uriBuilder.Path.TrimEnd('/') + _path;
-            _uriBuilder.Query = _query.ToString();
-            var _url = _uriBuilder.Uri;
 
-            HttpRequestMessage _req = null;
-            HttpResponseMessage _res = null;
-            try
+            using (var _req = Client.Pipeline.CreateRequest())
             {
-                _req = new HttpRequestMessage(HttpMethod.Delete, _url);
+                _req.Uri = _url;
+                _req.Method = RequestMethod.Delete;
 
-                if (Client.Credentials != null)
+                using (var _res = await Client.SendAsync(_req, cancellationToken).ConfigureAwait(false))
                 {
-                    await Client.Credentials.ProcessHttpRequestAsync(_req, cancellationToken).ConfigureAwait(false);
-                }
+                    if (_res.Status < 200 || _res.Status >= 300)
+                    {
+                        await OnRemoveAssetLocationFromAssetFailed(_req, _res).ConfigureAwait(false);
+                    }
 
-                _res = await Client.SendAsync(_req, cancellationToken).ConfigureAwait(false);
-                if (!_res.IsSuccessStatusCode)
-                {
-                    await OnRemoveAssetLocationFromAssetFailed(_req, _res);
+
+                    return;
                 }
-                string _responseContent = await _res.Content.ReadAsStringAsync().ConfigureAwait(false);
-                return new HttpOperationResponse
-                {
-                    Request = _req,
-                    Response = _res,
-                };
             }
-            catch (Exception)
+        }
+
+        internal async Task OnRemoveAssetLocationFromAssetFailed(Request req, Response res)
+        {
+            string content = null;
+            if (res.ContentStream != null)
             {
-                _req?.Dispose();
-                _res?.Dispose();
-                throw;
+                using (var reader = new StreamReader(res.ContentStream))
+                {
+                    content = await reader.ReadToEndAsync().ConfigureAwait(false);
+                }
             }
+
+            var ex = new RestApiException<Models.ApiError>(
+                req,
+                res,
+                content,
+                Client.Deserialize<Models.ApiError>(content)
+                );
+            HandleFailedRemoveAssetLocationFromAssetRequest(ex);
+            HandleFailedRequest(ex);
+            Client.OnFailedRequest(ex);
+            throw ex;
         }
     }
 }

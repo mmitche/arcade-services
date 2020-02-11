@@ -124,15 +124,14 @@ namespace Microsoft.DotNet.DarcLib
                         retryCount: 0);
                     return content["content"].ToString();
                 }
-                catch (HttpRequestException reqEx) when (reqEx.Message.Contains("404 (Not Found)"))
+                catch (HttpRequestException reqEx) when (reqEx.Message.Contains("404 (Not Found)") || reqEx.Message.Contains("400 (Bad Request)"))
                 {
                     // Continue
                     lastException = reqEx;
                 }
             }
-            _logger.LogError(
-                        $"Could not get file contents at {filePath} from {repoName} at branch/commit '{branchOrCommit}'.");
-            throw lastException;
+
+            throw new DependencyFileNotFoundException(filePath, $"{repoName}", branchOrCommit, lastException);
         }
 
         /// <summary>
@@ -544,7 +543,7 @@ namespace Microsoft.DotNet.DarcLib
         /// </summary>
         /// <param name="repoUri">Repository uri</param>
         /// <param name="branch">Branch to retrieve the latest sha for</param>
-        /// <returns>Latest sha.  Throws if no commits were found.</returns>
+        /// <returns>Latest sha. Null if no commits were found.</returns>
         public Task<string> GetLastCommitShaAsync(string repoUri, string branch)
         {
             (string accountName, string projectName, string repoName) = ParseRepoUri(repoUri);
@@ -561,20 +560,22 @@ namespace Microsoft.DotNet.DarcLib
         /// <returns>Latest sha. Throws if there were not commits on <paramref name="branch"/></returns>
         private async Task<string> GetLastCommitShaAsync(string accountName, string projectName, string repoName, string branch)
         {
-            JObject content = await this.ExecuteAzureDevOpsAPIRequestAsync(
-                HttpMethod.Get,
-                accountName,
-                projectName,
-                $"_apis/git/repositories/{repoName}/commits?branch={branch}",
-                _logger);
-            JArray values = JArray.Parse(content["value"].ToString());
-
-            if (!values.Any())
+            try
             {
-                throw new DarcException($"No commits found in branch '{branch}' of '{accountName}/{projectName}/{repoName}'");
-            }
+                JObject content = await this.ExecuteAzureDevOpsAPIRequestAsync(
+                    HttpMethod.Get,
+                    accountName,
+                    projectName,
+                    $"_apis/git/repositories/{repoName}/commits?branch={branch}",
+                    _logger);
+                JArray values = JArray.Parse(content["value"].ToString());
 
-            return values[0]["commitId"].ToString();
+                return values[0]["commitId"].ToString();
+            }
+            catch (HttpRequestException exc) when (exc.Message.Contains(((int)HttpStatusCode.NotFound).ToString()))
+            {
+                return null;
+            }
         }
 
         /// <summary>
@@ -1076,6 +1077,29 @@ namespace Microsoft.DotNet.DarcLib
         }
 
         /// <summary>
+        ///     Queue a new build on the specified build definition with the given queue time variables.
+        /// </summary>
+        /// <param name="accountName">Account where the project is hosted.</param>
+        /// <param name="projectName">Project where the build definition is.</param>
+        /// <param name="azdoDefinitionId">ID of the build definition where a build should be queued.</param>
+        /// <param name="queueTimeVariables">A string in JSON format containing the queue time variables to be used.</param>
+        public async Task<int> StartNewBuildAsync(string accountName, string projectName, int azdoDefinitionId, string sourceBranch, string sourceVersion, string queueTimeVariables = null)
+        {
+            var body = $"{{ \"definition\": {{ \"id\": \"{azdoDefinitionId}\" }}, \"sourceBranch\": \"{sourceBranch}\", \"sourceVersion\": \"{sourceVersion}\", \"parameters\": '{queueTimeVariables}'  }}";
+
+            JObject content = await this.ExecuteAzureDevOpsAPIRequestAsync(
+                HttpMethod.Post,
+                accountName,
+                projectName,
+                $"_apis/build/builds/",
+                _logger,
+                body,
+                versionOverride: "5.1");
+
+            return content.GetValue("id").ToObject<int>();
+        }
+
+        /// <summary>
         /// Return the description of the release with ID informed.
         /// </summary>
         /// <param name="accountName">Azure DevOps account name</param>
@@ -1197,6 +1221,31 @@ namespace Microsoft.DotNet.DarcLib
         public void AddRemoteIfMissing(string repoDir, string repoUrl)
         {
             throw new NotImplementedException("Cannot add a remote to a remote repo.");
+        }
+
+        /// <summary>
+        /// Checks that a repository exists
+        /// </summary>
+        /// <param name="repoUri">Repository uri</param>
+        /// <returns>True if the repository exists, false otherwise.</returns>
+        public async Task<bool> RepoExistsAsync(string repoUri)
+        {
+            (string accountName, string projectName, string repoName) = ParseRepoUri(repoUri);
+
+            try
+            {
+                await this.ExecuteAzureDevOpsAPIRequestAsync(
+                       HttpMethod.Get,
+                       accountName,
+                       projectName,
+                       $"_apis/git/repositories/{repoName}",
+                       _logger,
+                       logFailure: false);
+                return true;
+            }
+            catch (Exception) { }
+
+            return false;
         }
     }
 }

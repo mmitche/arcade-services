@@ -1,8 +1,10 @@
 import { Injectable } from "@angular/core";
-import { Observable, combineLatest } from "rxjs";
-import { Channel, DefaultChannel, Subscription } from 'src/maestro-client/models';
+import { Observable, of, combineLatest } from "rxjs";
+import { Channel, DefaultChannel, Subscription, FlowGraph } from 'src/maestro-client/models';
+import { StatefulResult, statefulSwitchMap } from 'src/stateful';
 import { MaestroService } from 'src/maestro-client';
-import { shareReplay, map } from 'rxjs/operators';
+import { tap, shareReplay, map } from 'rxjs/operators';
+
 
 function channelSorter(a: Channel, b: Channel): number {
   if (a.name == b.name) {
@@ -29,6 +31,7 @@ function repoSorter(a: DefaultChannel, b: DefaultChannel): number {
 })
 export class ChannelService {
   private channels$: Observable<Channel[]>;
+  static graphCache: Record<number, FlowGraph> = {};
 
   public constructor(private maestro: MaestroService) {
     this.channels$ = maestro.channels.listChannelsAsync({}).pipe(
@@ -45,25 +48,37 @@ export class ChannelService {
     return this.buildRepositoriesList(channelId);
   }
 
-  private buildRepositoriesList(channelId: number): Observable<DefaultChannel[]> {
-    let defaultChannels = this.maestro.defaultChannels.listAsync({ channelId: channelId });
-    let subscriptions = this.maestro.subscriptions.listSubscriptionsAsync({ channelId: channelId });
-    
-    let targetRepos = subscriptions.pipe(map(x => x.map(y => {
-      return new DefaultChannel({
-        repository: y.targetRepository!,
-        branch: y.targetBranch, 
-        id: 0,
-      });
-    })));
-
-    const repos = combineLatest(targetRepos, defaultChannels).pipe(
-      map(([l,r]) => {
-        let dcArray = new Array<DefaultChannel>().concat(r).concat(l);
-        return dcArray.filter((dc,index) => dcArray.findIndex(t => t.repository === dc.repository) === index).sort(repoSorter);
-      }),
+  public getFlowGraph(id: number): Observable<StatefulResult<FlowGraph>> {
+    // return of(channelId).pipe(
+    //   statefulSwitchMap(id => {
+    //     if (id in ChannelService.graphCache) {
+    //       return of(ChannelService.graphCache[id]);
+    //     }
+    //     return this.maestro.channels.getFlowGraphAsync({id}).pipe(
+    //       tap(graph => ChannelService.graphCache[id] = graph),
+    //     );
+    //   }),
+    // );
+    if (id in ChannelService.graphCache) {
+      return of(ChannelService.graphCache[id]);
+    }
+    return this.maestro.channels.getFlowGraphAsync({id}).pipe(
+      tap(graph => ChannelService.graphCache[id] = graph),
     );
+  }
 
-    return repos; 
+  private buildRepositoriesList(channelId: number): Observable<DefaultChannel[]> {
+// new
+      let builds = this.maestro.channels.listRepositoriesAsync({ id: channelId });
+
+      let repos = builds.pipe(
+          map(x => x.map(y => {
+            return new DefaultChannel({
+            repository: y ,
+            branch: undefined,
+            id: 0,
+          });
+        })));
+      return repos;
   }
 }

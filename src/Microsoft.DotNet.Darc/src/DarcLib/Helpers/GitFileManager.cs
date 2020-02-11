@@ -22,15 +22,26 @@ namespace Microsoft.DotNet.DarcLib
         private readonly IGitRepo _gitClient;
         private readonly ILogger _logger;
 
-        // Matches package feeds like
-        // https://dnceng.pkgs.visualstudio.com/public/_packaging/darc-pub-arcade-fd8184c3fcde81eb27ca4c061c6e171f418d753f-1/nuget/v3/index.json
-        private const string MaestroManagedFeedPattern =
-            @"https://(?<organization>\w+).pkgs.visualstudio.com/(public/){0,1}_packaging/darc-(?<type>(int|pub))-(?<repository>.+?)-(?<sha>[A-Fa-f0-9]{7,40})-?(?<subversion>\d*)/nuget/v\d+/index.json";
+        private readonly string[] MaestroManagedFeedPatterns =
+        {
+            // Matches package feeds like
+            // https://dnceng.pkgs.visualstudio.com/public/_packaging/darc-pub-arcade-fd8184c3fcde81eb27ca4c061c6e171f418d753f-1/nuget/v3/index.json
+            @"https://(?<organization>\w+).pkgs.visualstudio.com/(public/){0,1}_packaging/darc-(?<type>(int|pub))-(?<repository>.+?)-(?<sha>[A-Fa-f0-9]{7,40})-?(?<subversion>\d*)/nuget/v\d+/index.json",
+            // Matches package feeds like
+            // https://pkgs.dev.azure.com/dnceng/public/_packaging/darc-pub-dotnet-wpf-8182abc8/nuget/v3/index.json
+            @"https://pkgs.dev.azure.com/(?<organization>\w+)/(public/){0,1}_packaging/darc-(?<type>(int|pub))-(?<repository>.+?)-(?<sha>[A-Fa-f0-9]{7,40})-?(?<subversion>\d*)/nuget/v\d+/index.json"
+        };
 
         // Matches package feeds like
         // https://dotnet-feed-internal.azurewebsites.net/container/dotnet-core-internal/sig/dsdfasdfasdf234234s/se/2020-02-02/darc-int-dotnet-arcade-services-babababababe-08/index.json
         private const string AzureStorageProxyFeedPattern =
             @"https://([a-z-]+).azurewebsites.net/container/([^/]+)/sig/\w+/se/([0-9]{4}-[0-9]{2}-[0-9]{2})/darc-(?<type>int)-(?<repository>.+?)-(?<sha>[A-Fa-f0-9]{7,40})-?(?<subversion>\d*)/index.json";
+
+        private const string MaestroBeginComment =
+            "Begin: Package sources managed by Dependency Flow automation. Do not edit the sources below.";
+
+        private const string MaestroEndComment =
+            "End: Package sources managed by Dependency Flow automation. Do not edit the sources above.";
 
         public GitFileManager(IGitRepo gitRepo, ILogger logger)
         {
@@ -173,7 +184,7 @@ namespace Microsoft.DotNet.DarcLib
             IEnumerable<DependencyDetail> itemsToUpdate,
             string repoUri,
             string branch,
-            IEnumerable<DependencyDetail> oldDependencies = null)
+            IEnumerable<DependencyDetail> oldDependencies)
         {
             XmlDocument versionDetails = await ReadVersionDetailsXmlAsync(repoUri, branch);
             XmlDocument versionProps = await ReadVersionPropsAsync(repoUri, branch);
@@ -240,7 +251,7 @@ namespace Microsoft.DotNet.DarcLib
 
             // At this point we only care about the Maestro managed locations for the assets. 
             // Flatten the dictionary into a set that has all the managed feeds
-            HashSet<string> managedFeeds = FlattenLocations(itemsToUpdateLocations, IsMaestroManagedFeed);
+            HashSet<string> managedFeeds = FlattenLocations(itemsToUpdateLocations);
 
             var updatedNugetConfig = UpdatePackageSources(nugetConfig, managedFeeds);
 
@@ -255,13 +266,18 @@ namespace Microsoft.DotNet.DarcLib
             return fileContainer;
         }
 
+        private bool IsOnlyPresentInMaestroManagedFeed(HashSet<string> locations)
+        {
+            return locations != null && locations.All(l => IsMaestroManagedFeed(l));
+        }
+
         private bool IsMaestroManagedFeed(string feed)
         {
-            return Regex.IsMatch(feed, MaestroManagedFeedPattern) || 
+            return MaestroManagedFeedPatterns.Any(p => Regex.IsMatch(feed, p)) || 
                 Regex.IsMatch(feed, AzureStorageProxyFeedPattern);
         }
 
-        private XmlDocument UpdatePackageSources(XmlDocument nugetConfig, HashSet<string> maestroManagedFeeds)
+        public XmlDocument UpdatePackageSources(XmlDocument nugetConfig, HashSet<string> maestroManagedFeeds)
         {
             // Reconstruct the PackageSources section with the feeds
             XmlNode packageSourcesNode = nugetConfig.SelectSingleNode("//configuration/packageSources");
@@ -270,34 +286,107 @@ namespace Microsoft.DotNet.DarcLib
                 _logger.LogError("Did not find a <packageSources> element in NuGet.config");
                 return nugetConfig;
             }
-            var unmanagedSources = GetPackageSources(nugetConfig, f => !IsMaestroManagedFeed(f));
-            var managedSources = GetManagedPackageSources(maestroManagedFeeds).OrderByDescending(t => t.feed).ToList();
-            packageSourcesNode.RemoveAll();
-            SetElement(nugetConfig, packageSourcesNode, "clear");
 
-            // Maestro managed sources should go first if there are any.
-            if (maestroManagedFeeds.Count > 0)
+            const string addPackageSourcesElementName = "add";
+
+            XmlNode currentNode = packageSourcesNode.FirstChild;
+
+            var managedSources = GetManagedPackageSources(maestroManagedFeeds).OrderByDescending(t => t.feed).ToList();
+            // This will be used to denote whether we should delete a managed source. Managed sources should only
+            // be deleted within the maestro comment block. This allows for repository owners to use specific feeds from
+            // other channels or releases in special cases.
+            bool withinMaestroComments = false;
+
+            // Remove all managed feeds and Maestro's comments
+            while (currentNode != null)
             {
-                packageSourcesNode.AppendChild(nugetConfig.CreateComment(
-                    "Begin: Package sources managed by Dependency Flow automation. Do not edit the sources below."));
-                AppendToPackageSources(nugetConfig, packageSourcesNode, managedSources);
-                packageSourcesNode.AppendChild(nugetConfig.CreateComment(
-                    "End: Package sources managed by Dependency Flow automation. Do not edit the sources above."));
+                if (currentNode.NodeType == XmlNodeType.Element)
+                {
+                    if (currentNode.Name.Equals(addPackageSourcesElementName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        // Get the feed value
+                        var feedValue = currentNode.Attributes["value"];
+                        if (feedValue == null)
+                        {
+                            // This is unexpected, error
+                            _logger.LogError("NuGet.config 'add' element did not have a feed 'value' attribute.");
+                            return nugetConfig;
+                        }
+
+                        if (withinMaestroComments && IsMaestroManagedFeed(feedValue.Value))
+                        {
+                            currentNode = RemoveCurrentNode(currentNode);
+                            continue;
+                        }
+                    }
+                    // Remove the clear element wherever it is.
+                    // It will be added when we add the maestro managed sources.
+                    else if (currentNode.Name.Equals(VersionFiles.ClearElement, StringComparison.OrdinalIgnoreCase))
+                    {
+                        currentNode = RemoveCurrentNode(currentNode);
+                        continue;
+                    }
+                }
+                else if (currentNode.NodeType == XmlNodeType.Comment)
+                {
+                    if (currentNode.Value.Equals(MaestroBeginComment, StringComparison.OrdinalIgnoreCase) ||
+                        currentNode.Value.Equals(MaestroEndComment, StringComparison.OrdinalIgnoreCase))
+                    {
+                        withinMaestroComments = currentNode.Value.Equals(MaestroBeginComment, StringComparison.OrdinalIgnoreCase);
+                        currentNode = RemoveCurrentNode(currentNode);
+                        continue;
+                    }
+                }
+
+                currentNode = currentNode.NextSibling;
             }
 
-            AppendToPackageSources(nugetConfig, packageSourcesNode, unmanagedSources);
+            InsertManagedPackagesBlock(nugetConfig, packageSourcesNode, managedSources);
 
             return nugetConfig;
         }
 
-        private static void AppendToPackageSources(XmlDocument nugetConfig, XmlNode packageSourcesNode, List<(string key, string feed)> sources)
+        /// <summary>
+        /// Remove the current node and return the next node that should be walked
+        /// </summary>
+        /// <param name="toRemove">Node to remove</param>
+        /// <returns>Next node to walk</returns>
+        private static XmlNode RemoveCurrentNode(XmlNode toRemove)
         {
-            foreach ((string key, string feed) in sources)
+            var nextNodeToWalk = toRemove.NextSibling;
+            toRemove.ParentNode.RemoveChild(toRemove);
+            return nextNodeToWalk;
+        }
+
+        // Insert the following structure at the beginning of the nodes pointed by `packageSourcesNode`.
+        // <clear/>
+        // <MaestroBeginComment />
+        // managedSources*
+        // <MaestroEndComment />
+        private static void InsertManagedPackagesBlock(XmlDocument nugetConfig, XmlNode packageSourcesNode, List<(string key, string feed)> managedSources)
+        {
+            var clearNode = nugetConfig.CreateElement(VersionFiles.ClearElement);
+            packageSourcesNode.PrependChild(clearNode);
+
+            if (managedSources.Count <= 0)
             {
-                XmlNode addNode = SetElement(nugetConfig, packageSourcesNode, VersionFiles.AddElement, replace: false);
-                SetAttribute(nugetConfig, addNode, VersionFiles.KeyAttributeName, key);
-                SetAttribute(nugetConfig, addNode, VersionFiles.ValueAttributeName, feed);
+                return;
             }
+
+            packageSourcesNode.InsertAfter(nugetConfig.CreateComment(MaestroEndComment), clearNode);
+
+            XmlNode prevNode = packageSourcesNode.FirstChild;
+            foreach ((string key, string feed) in managedSources)
+            {
+                var newElement = nugetConfig.CreateElement(VersionFiles.AddElement);
+
+                SetAttribute(nugetConfig, newElement, VersionFiles.KeyAttributeName, key);
+                SetAttribute(nugetConfig, newElement, VersionFiles.ValueAttributeName, feed);
+
+                prevNode = packageSourcesNode.InsertAfter(newElement, prevNode);
+            }
+
+            packageSourcesNode.InsertAfter(nugetConfig.CreateComment(MaestroBeginComment), packageSourcesNode.FirstChild);
         }
 
         public async Task AddDependencyToVersionDetailsAsync(
@@ -467,12 +556,12 @@ namespace Microsoft.DotNet.DarcLib
                 $"Dependency '{dependencyName}' with version '{version}' successfully added to global.json");
         }
 
-        private XmlDocument ReadXmlFile(string fileContent)
+        public static XmlDocument ReadXmlFile(string fileContent)
         {
             return GetXmlDocument(fileContent);
         }
 
-        private XmlDocument GetXmlDocument(string fileContent)
+        public static XmlDocument GetXmlDocument(string fileContent)
         {
             XmlDocument document = new XmlDocument
             {
@@ -562,7 +651,7 @@ namespace Microsoft.DotNet.DarcLib
 
             foreach (JProperty property in token.Children<JProperty>())
             {
-                if (property.Name == versionElementName)
+                if (property.Name.Equals(versionElementName, StringComparison.OrdinalIgnoreCase))
                 {
                     property.Value = new JValue(itemToUpdate.Version);
                     break;
@@ -903,17 +992,15 @@ namespace Microsoft.DotNet.DarcLib
             return dependencyDetails.Where(d => !d.Pinned);
         }
 
-        private HashSet<string> FlattenLocations(Dictionary<string, HashSet<string>> assetLocationMap, Func<string, bool> filter = null)
+        private HashSet<string> FlattenLocations(Dictionary<string, HashSet<string>> assetLocationMap)
         {
             HashSet<string> managedFeeds = new HashSet<string>();
-
-            foreach (HashSet<string> locations in assetLocationMap.Values)
+            foreach (string asset in assetLocationMap.Keys)
             {
-                IEnumerable<string> filteredLocations = filter != null ?
-                    locations.Where(filter) :
-                    locations;
-
-                managedFeeds.UnionWith(filteredLocations);
+                if (IsOnlyPresentInMaestroManagedFeed(assetLocationMap[asset]))
+                {
+                    managedFeeds.UnionWith(assetLocationMap[asset]);
+                }
             }
             return managedFeeds;
         }
@@ -961,7 +1048,15 @@ namespace Microsoft.DotNet.DarcLib
 
         private (string org, string repoName, string type, string sha, string subVersion) ParseMaestroManagedFeed(string feed)
         {
-            var match = Regex.Match(feed, MaestroManagedFeedPattern);
+            Match match = null;
+            foreach (string pattern in MaestroManagedFeedPatterns)
+            {
+                match = Regex.Match(feed, pattern);
+                if (match.Success)
+                {
+                    break;
+                }
+            }
 
             match = match.Success ? 
                 match : 

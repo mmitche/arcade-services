@@ -51,7 +51,7 @@ namespace SubscriptionActorService.Tests
             Builder.RegisterInstance(ActionRunner.Object);
 
             var services = new ServiceCollection();
-            services.AddDbContext<BuildAssetRegistryContext>(
+            services.AddBuildAssetRegistry(
                 options => { options.UseInMemoryDatabase("BuildAssetRegistry"); });
             Builder.Populate(services);
         }
@@ -147,7 +147,8 @@ namespace SubscriptionActorService.Tests
                             new BuildChannel
                             {
                                 Build = build,
-                                Channel = Channel
+                                Channel = Channel,
+                                DateTimeAdded = DateTimeOffset.UtcNow
                             });
                     }
                 });

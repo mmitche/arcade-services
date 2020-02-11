@@ -1,40 +1,52 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
-using System.Net.Http;
-using System.Net.Http.Headers;
+using System.IO;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Rest;
-using Microsoft.DotNet.Maestro.Client.Models;
+using Azure;
+using Azure.Core;
+
+
 
 namespace Microsoft.DotNet.Maestro.Client
 {
     public partial interface IChannels
     {
-        Task<IImmutableList<Channel>> ListChannelsAsync(
+        Task<IImmutableList<Models.Channel>> ListChannelsAsync(
             string classification = default,
             CancellationToken cancellationToken = default
         );
 
-        Task<Channel> CreateChannelAsync(
+        Task<Models.Channel> CreateChannelAsync(
             string classification,
             string name,
             CancellationToken cancellationToken = default
         );
 
-        Task<Channel> GetChannelAsync(
+        Task<IImmutableList<string>> ListRepositoriesAsync(
             int id,
             CancellationToken cancellationToken = default
         );
 
-        Task<Channel> DeleteChannelAsync(
+        Task<Models.Channel> GetChannelAsync(
+            int id,
+            CancellationToken cancellationToken = default
+        );
+
+        Task<Models.Channel> DeleteChannelAsync(
             int id,
             CancellationToken cancellationToken = default
         );
 
         Task AddBuildToChannelAsync(
+            int buildId,
+            int channelId,
+            CancellationToken cancellationToken = default
+        );
+
+        Task RemoveBuildFromChannelAsync(
             int buildId,
             int channelId,
             CancellationToken cancellationToken = default
@@ -67,27 +79,71 @@ namespace Microsoft.DotNet.Maestro.Client
 
         partial void HandleFailedListChannelsRequest(RestApiException ex);
 
-        public async Task<IImmutableList<Channel>> ListChannelsAsync(
+        public async Task<IImmutableList<Models.Channel>> ListChannelsAsync(
             string classification = default,
             CancellationToken cancellationToken = default
         )
         {
-            using (var _res = await ListChannelsInternalAsync(
-                classification,
-                cancellationToken
-            ).ConfigureAwait(false))
+
+            const string apiVersion = "2019-01-16";
+
+            var _baseUri = Client.Options.BaseUri;
+            var _url = new RequestUriBuilder();
+            _url.Reset(_baseUri);
+            _url.AppendPath(
+                "/api/channels",
+                false);
+
+            if (!string.IsNullOrEmpty(classification))
             {
-                return _res.Body;
+                _url.AppendQuery("classification", Client.Serialize(classification));
+            }
+            _url.AppendQuery("api-version", Client.Serialize(apiVersion));
+
+
+            using (var _req = Client.Pipeline.CreateRequest())
+            {
+                _req.Uri = _url;
+                _req.Method = RequestMethod.Get;
+
+                using (var _res = await Client.SendAsync(_req, cancellationToken).ConfigureAwait(false))
+                {
+                    if (_res.Status < 200 || _res.Status >= 300)
+                    {
+                        await OnListChannelsFailed(_req, _res).ConfigureAwait(false);
+                    }
+
+                    if (_res.ContentStream == null)
+                    {
+                        await OnListChannelsFailed(_req, _res).ConfigureAwait(false);
+                    }
+
+                    using (var _reader = new StreamReader(_res.ContentStream))
+                    {
+                        var _content = await _reader.ReadToEndAsync().ConfigureAwait(false);
+                        var _body = Client.Deserialize<IImmutableList<Models.Channel>>(_content);
+                        return _body;
+                    }
+                }
             }
         }
 
-        internal async Task OnListChannelsFailed(HttpRequestMessage req, HttpResponseMessage res)
+        internal async Task OnListChannelsFailed(Request req, Response res)
         {
-            var content = await res.Content.ReadAsStringAsync().ConfigureAwait(false);
-            var ex = new RestApiException<ApiError>(
-                new HttpRequestMessageWrapper(req, null),
-                new HttpResponseMessageWrapper(res, content),
-                Client.Deserialize<ApiError>(content)
+            string content = null;
+            if (res.ContentStream != null)
+            {
+                using (var reader = new StreamReader(res.ContentStream))
+                {
+                    content = await reader.ReadToEndAsync().ConfigureAwait(false);
+                }
+            }
+
+            var ex = new RestApiException<Models.ApiError>(
+                req,
+                res,
+                content,
+                Client.Deserialize<Models.ApiError>(content)
                 );
             HandleFailedListChannelsRequest(ex);
             HandleFailedRequest(ex);
@@ -95,97 +151,15 @@ namespace Microsoft.DotNet.Maestro.Client
             throw ex;
         }
 
-        internal async Task<HttpOperationResponse<IImmutableList<Channel>>> ListChannelsInternalAsync(
-            string classification = default,
-            CancellationToken cancellationToken = default
-        )
-        {
-            const string apiVersion = "2019-01-16";
-
-            var _path = "/api/channels";
-
-            var _query = new QueryBuilder();
-            if (!string.IsNullOrEmpty(classification))
-            {
-                _query.Add("classification", Client.Serialize(classification));
-            }
-            _query.Add("api-version", Client.Serialize(apiVersion));
-
-            var _uriBuilder = new UriBuilder(Client.BaseUri);
-            _uriBuilder.Path = _uriBuilder.Path.TrimEnd('/') + _path;
-            _uriBuilder.Query = _query.ToString();
-            var _url = _uriBuilder.Uri;
-
-            HttpRequestMessage _req = null;
-            HttpResponseMessage _res = null;
-            try
-            {
-                _req = new HttpRequestMessage(HttpMethod.Get, _url);
-
-                if (Client.Credentials != null)
-                {
-                    await Client.Credentials.ProcessHttpRequestAsync(_req, cancellationToken).ConfigureAwait(false);
-                }
-
-                _res = await Client.SendAsync(_req, cancellationToken).ConfigureAwait(false);
-                if (!_res.IsSuccessStatusCode)
-                {
-                    await OnListChannelsFailed(_req, _res);
-                }
-                string _responseContent = await _res.Content.ReadAsStringAsync().ConfigureAwait(false);
-                return new HttpOperationResponse<IImmutableList<Channel>>
-                {
-                    Request = _req,
-                    Response = _res,
-                    Body = Client.Deserialize<IImmutableList<Channel>>(_responseContent),
-                };
-            }
-            catch (Exception)
-            {
-                _req?.Dispose();
-                _res?.Dispose();
-                throw;
-            }
-        }
-
         partial void HandleFailedCreateChannelRequest(RestApiException ex);
 
-        public async Task<Channel> CreateChannelAsync(
+        public async Task<Models.Channel> CreateChannelAsync(
             string classification,
             string name,
             CancellationToken cancellationToken = default
         )
         {
-            using (var _res = await CreateChannelInternalAsync(
-                classification,
-                name,
-                cancellationToken
-            ).ConfigureAwait(false))
-            {
-                return _res.Body;
-            }
-        }
 
-        internal async Task OnCreateChannelFailed(HttpRequestMessage req, HttpResponseMessage res)
-        {
-            var content = await res.Content.ReadAsStringAsync().ConfigureAwait(false);
-            var ex = new RestApiException<ApiError>(
-                new HttpRequestMessageWrapper(req, null),
-                new HttpResponseMessageWrapper(res, content),
-                Client.Deserialize<ApiError>(content)
-                );
-            HandleFailedCreateChannelRequest(ex);
-            HandleFailedRequest(ex);
-            Client.OnFailedRequest(ex);
-            throw ex;
-        }
-
-        internal async Task<HttpOperationResponse<Channel>> CreateChannelInternalAsync(
-            string classification,
-            string name,
-            CancellationToken cancellationToken = default
-        )
-        {
             if (string.IsNullOrEmpty(classification))
             {
                 throw new ArgumentNullException(nameof(classification));
@@ -198,79 +172,217 @@ namespace Microsoft.DotNet.Maestro.Client
 
             const string apiVersion = "2019-01-16";
 
-            var _path = "/api/channels";
+            var _baseUri = Client.Options.BaseUri;
+            var _url = new RequestUriBuilder();
+            _url.Reset(_baseUri);
+            _url.AppendPath(
+                "/api/channels",
+                false);
 
-            var _query = new QueryBuilder();
             if (!string.IsNullOrEmpty(name))
             {
-                _query.Add("name", Client.Serialize(name));
+                _url.AppendQuery("name", Client.Serialize(name));
             }
             if (!string.IsNullOrEmpty(classification))
             {
-                _query.Add("classification", Client.Serialize(classification));
+                _url.AppendQuery("classification", Client.Serialize(classification));
             }
-            _query.Add("api-version", Client.Serialize(apiVersion));
+            _url.AppendQuery("api-version", Client.Serialize(apiVersion));
 
-            var _uriBuilder = new UriBuilder(Client.BaseUri);
-            _uriBuilder.Path = _uriBuilder.Path.TrimEnd('/') + _path;
-            _uriBuilder.Query = _query.ToString();
-            var _url = _uriBuilder.Uri;
 
-            HttpRequestMessage _req = null;
-            HttpResponseMessage _res = null;
-            try
+            using (var _req = Client.Pipeline.CreateRequest())
             {
-                _req = new HttpRequestMessage(HttpMethod.Post, _url);
+                _req.Uri = _url;
+                _req.Method = RequestMethod.Post;
 
-                if (Client.Credentials != null)
+                using (var _res = await Client.SendAsync(_req, cancellationToken).ConfigureAwait(false))
                 {
-                    await Client.Credentials.ProcessHttpRequestAsync(_req, cancellationToken).ConfigureAwait(false);
-                }
+                    if (_res.Status < 200 || _res.Status >= 300)
+                    {
+                        await OnCreateChannelFailed(_req, _res).ConfigureAwait(false);
+                    }
 
-                _res = await Client.SendAsync(_req, cancellationToken).ConfigureAwait(false);
-                if (!_res.IsSuccessStatusCode)
-                {
-                    await OnCreateChannelFailed(_req, _res);
+                    if (_res.ContentStream == null)
+                    {
+                        await OnCreateChannelFailed(_req, _res).ConfigureAwait(false);
+                    }
+
+                    using (var _reader = new StreamReader(_res.ContentStream))
+                    {
+                        var _content = await _reader.ReadToEndAsync().ConfigureAwait(false);
+                        var _body = Client.Deserialize<Models.Channel>(_content);
+                        return _body;
+                    }
                 }
-                string _responseContent = await _res.Content.ReadAsStringAsync().ConfigureAwait(false);
-                return new HttpOperationResponse<Channel>
-                {
-                    Request = _req,
-                    Response = _res,
-                    Body = Client.Deserialize<Channel>(_responseContent),
-                };
-            }
-            catch (Exception)
-            {
-                _req?.Dispose();
-                _res?.Dispose();
-                throw;
             }
         }
 
-        partial void HandleFailedGetChannelRequest(RestApiException ex);
+        internal async Task OnCreateChannelFailed(Request req, Response res)
+        {
+            string content = null;
+            if (res.ContentStream != null)
+            {
+                using (var reader = new StreamReader(res.ContentStream))
+                {
+                    content = await reader.ReadToEndAsync().ConfigureAwait(false);
+                }
+            }
 
-        public async Task<Channel> GetChannelAsync(
+            var ex = new RestApiException<Models.ApiError>(
+                req,
+                res,
+                content,
+                Client.Deserialize<Models.ApiError>(content)
+                );
+            HandleFailedCreateChannelRequest(ex);
+            HandleFailedRequest(ex);
+            Client.OnFailedRequest(ex);
+            throw ex;
+        }
+
+        partial void HandleFailedListRepositoriesRequest(RestApiException ex);
+
+        public async Task<IImmutableList<string>> ListRepositoriesAsync(
             int id,
             CancellationToken cancellationToken = default
         )
         {
-            using (var _res = await GetChannelInternalAsync(
-                id,
-                cancellationToken
-            ).ConfigureAwait(false))
+
+            if (id == default(int))
             {
-                return _res.Body;
+                throw new ArgumentNullException(nameof(id));
+            }
+
+            const string apiVersion = "2019-01-16";
+
+            var _baseUri = Client.Options.BaseUri;
+            var _url = new RequestUriBuilder();
+            _url.Reset(_baseUri);
+            _url.AppendPath(
+                "/api/channels/{id}/repositories".Replace("{id}", Uri.EscapeDataString(Client.Serialize(id))),
+                false);
+
+            _url.AppendQuery("api-version", Client.Serialize(apiVersion));
+
+
+            using (var _req = Client.Pipeline.CreateRequest())
+            {
+                _req.Uri = _url;
+                _req.Method = RequestMethod.Get;
+
+                using (var _res = await Client.SendAsync(_req, cancellationToken).ConfigureAwait(false))
+                {
+                    if (_res.Status < 200 || _res.Status >= 300)
+                    {
+                        await OnListRepositoriesFailed(_req, _res).ConfigureAwait(false);
+                    }
+
+                    if (_res.ContentStream == null)
+                    {
+                        await OnListRepositoriesFailed(_req, _res).ConfigureAwait(false);
+                    }
+
+                    using (var _reader = new StreamReader(_res.ContentStream))
+                    {
+                        var _content = await _reader.ReadToEndAsync().ConfigureAwait(false);
+                        var _body = Client.Deserialize<IImmutableList<string>>(_content);
+                        return _body;
+                    }
+                }
             }
         }
 
-        internal async Task OnGetChannelFailed(HttpRequestMessage req, HttpResponseMessage res)
+        internal async Task OnListRepositoriesFailed(Request req, Response res)
         {
-            var content = await res.Content.ReadAsStringAsync().ConfigureAwait(false);
-            var ex = new RestApiException<ApiError>(
-                new HttpRequestMessageWrapper(req, null),
-                new HttpResponseMessageWrapper(res, content),
-                Client.Deserialize<ApiError>(content)
+            string content = null;
+            if (res.ContentStream != null)
+            {
+                using (var reader = new StreamReader(res.ContentStream))
+                {
+                    content = await reader.ReadToEndAsync().ConfigureAwait(false);
+                }
+            }
+
+            var ex = new RestApiException<Models.ApiError>(
+                req,
+                res,
+                content,
+                Client.Deserialize<Models.ApiError>(content)
+                );
+            HandleFailedListRepositoriesRequest(ex);
+            HandleFailedRequest(ex);
+            Client.OnFailedRequest(ex);
+            throw ex;
+        }
+
+        partial void HandleFailedGetChannelRequest(RestApiException ex);
+
+        public async Task<Models.Channel> GetChannelAsync(
+            int id,
+            CancellationToken cancellationToken = default
+        )
+        {
+
+            if (id == default(int))
+            {
+                throw new ArgumentNullException(nameof(id));
+            }
+
+            const string apiVersion = "2019-01-16";
+
+            var _baseUri = Client.Options.BaseUri;
+            var _url = new RequestUriBuilder();
+            _url.Reset(_baseUri);
+            _url.AppendPath(
+                "/api/channels/{id}".Replace("{id}", Uri.EscapeDataString(Client.Serialize(id))),
+                false);
+
+            _url.AppendQuery("api-version", Client.Serialize(apiVersion));
+
+
+            using (var _req = Client.Pipeline.CreateRequest())
+            {
+                _req.Uri = _url;
+                _req.Method = RequestMethod.Get;
+
+                using (var _res = await Client.SendAsync(_req, cancellationToken).ConfigureAwait(false))
+                {
+                    if (_res.Status < 200 || _res.Status >= 300)
+                    {
+                        await OnGetChannelFailed(_req, _res).ConfigureAwait(false);
+                    }
+
+                    if (_res.ContentStream == null)
+                    {
+                        await OnGetChannelFailed(_req, _res).ConfigureAwait(false);
+                    }
+
+                    using (var _reader = new StreamReader(_res.ContentStream))
+                    {
+                        var _content = await _reader.ReadToEndAsync().ConfigureAwait(false);
+                        var _body = Client.Deserialize<Models.Channel>(_content);
+                        return _body;
+                    }
+                }
+            }
+        }
+
+        internal async Task OnGetChannelFailed(Request req, Response res)
+        {
+            string content = null;
+            if (res.ContentStream != null)
+            {
+                using (var reader = new StreamReader(res.ContentStream))
+                {
+                    content = await reader.ReadToEndAsync().ConfigureAwait(false);
+                }
+            }
+
+            var ex = new RestApiException<Models.ApiError>(
+                req,
+                res,
+                content,
+                Client.Deserialize<Models.ApiError>(content)
                 );
             HandleFailedGetChannelRequest(ex);
             HandleFailedRequest(ex);
@@ -278,144 +390,79 @@ namespace Microsoft.DotNet.Maestro.Client
             throw ex;
         }
 
-        internal async Task<HttpOperationResponse<Channel>> GetChannelInternalAsync(
+        partial void HandleFailedDeleteChannelRequest(RestApiException ex);
+
+        public async Task<Models.Channel> DeleteChannelAsync(
             int id,
             CancellationToken cancellationToken = default
         )
         {
-            if (id == default)
+
+            if (id == default(int))
             {
                 throw new ArgumentNullException(nameof(id));
             }
 
             const string apiVersion = "2019-01-16";
 
-            var _path = "/api/channels/{id}";
-            _path = _path.Replace("{id}", Client.Serialize(id));
+            var _baseUri = Client.Options.BaseUri;
+            var _url = new RequestUriBuilder();
+            _url.Reset(_baseUri);
+            _url.AppendPath(
+                "/api/channels/{id}".Replace("{id}", Uri.EscapeDataString(Client.Serialize(id))),
+                false);
 
-            var _query = new QueryBuilder();
-            _query.Add("api-version", Client.Serialize(apiVersion));
+            _url.AppendQuery("api-version", Client.Serialize(apiVersion));
 
-            var _uriBuilder = new UriBuilder(Client.BaseUri);
-            _uriBuilder.Path = _uriBuilder.Path.TrimEnd('/') + _path;
-            _uriBuilder.Query = _query.ToString();
-            var _url = _uriBuilder.Uri;
 
-            HttpRequestMessage _req = null;
-            HttpResponseMessage _res = null;
-            try
+            using (var _req = Client.Pipeline.CreateRequest())
             {
-                _req = new HttpRequestMessage(HttpMethod.Get, _url);
+                _req.Uri = _url;
+                _req.Method = RequestMethod.Delete;
 
-                if (Client.Credentials != null)
+                using (var _res = await Client.SendAsync(_req, cancellationToken).ConfigureAwait(false))
                 {
-                    await Client.Credentials.ProcessHttpRequestAsync(_req, cancellationToken).ConfigureAwait(false);
-                }
+                    if (_res.Status < 200 || _res.Status >= 300)
+                    {
+                        await OnDeleteChannelFailed(_req, _res).ConfigureAwait(false);
+                    }
 
-                _res = await Client.SendAsync(_req, cancellationToken).ConfigureAwait(false);
-                if (!_res.IsSuccessStatusCode)
-                {
-                    await OnGetChannelFailed(_req, _res);
+                    if (_res.ContentStream == null)
+                    {
+                        await OnDeleteChannelFailed(_req, _res).ConfigureAwait(false);
+                    }
+
+                    using (var _reader = new StreamReader(_res.ContentStream))
+                    {
+                        var _content = await _reader.ReadToEndAsync().ConfigureAwait(false);
+                        var _body = Client.Deserialize<Models.Channel>(_content);
+                        return _body;
+                    }
                 }
-                string _responseContent = await _res.Content.ReadAsStringAsync().ConfigureAwait(false);
-                return new HttpOperationResponse<Channel>
-                {
-                    Request = _req,
-                    Response = _res,
-                    Body = Client.Deserialize<Channel>(_responseContent),
-                };
-            }
-            catch (Exception)
-            {
-                _req?.Dispose();
-                _res?.Dispose();
-                throw;
             }
         }
 
-        partial void HandleFailedDeleteChannelRequest(RestApiException ex);
-
-        public async Task<Channel> DeleteChannelAsync(
-            int id,
-            CancellationToken cancellationToken = default
-        )
+        internal async Task OnDeleteChannelFailed(Request req, Response res)
         {
-            using (var _res = await DeleteChannelInternalAsync(
-                id,
-                cancellationToken
-            ).ConfigureAwait(false))
+            string content = null;
+            if (res.ContentStream != null)
             {
-                return _res.Body;
+                using (var reader = new StreamReader(res.ContentStream))
+                {
+                    content = await reader.ReadToEndAsync().ConfigureAwait(false);
+                }
             }
-        }
 
-        internal async Task OnDeleteChannelFailed(HttpRequestMessage req, HttpResponseMessage res)
-        {
-            var content = await res.Content.ReadAsStringAsync().ConfigureAwait(false);
-            var ex = new RestApiException<ApiError>(
-                new HttpRequestMessageWrapper(req, null),
-                new HttpResponseMessageWrapper(res, content),
-                Client.Deserialize<ApiError>(content)
+            var ex = new RestApiException<Models.ApiError>(
+                req,
+                res,
+                content,
+                Client.Deserialize<Models.ApiError>(content)
                 );
             HandleFailedDeleteChannelRequest(ex);
             HandleFailedRequest(ex);
             Client.OnFailedRequest(ex);
             throw ex;
-        }
-
-        internal async Task<HttpOperationResponse<Channel>> DeleteChannelInternalAsync(
-            int id,
-            CancellationToken cancellationToken = default
-        )
-        {
-            if (id == default)
-            {
-                throw new ArgumentNullException(nameof(id));
-            }
-
-            const string apiVersion = "2019-01-16";
-
-            var _path = "/api/channels/{id}";
-            _path = _path.Replace("{id}", Client.Serialize(id));
-
-            var _query = new QueryBuilder();
-            _query.Add("api-version", Client.Serialize(apiVersion));
-
-            var _uriBuilder = new UriBuilder(Client.BaseUri);
-            _uriBuilder.Path = _uriBuilder.Path.TrimEnd('/') + _path;
-            _uriBuilder.Query = _query.ToString();
-            var _url = _uriBuilder.Uri;
-
-            HttpRequestMessage _req = null;
-            HttpResponseMessage _res = null;
-            try
-            {
-                _req = new HttpRequestMessage(HttpMethod.Delete, _url);
-
-                if (Client.Credentials != null)
-                {
-                    await Client.Credentials.ProcessHttpRequestAsync(_req, cancellationToken).ConfigureAwait(false);
-                }
-
-                _res = await Client.SendAsync(_req, cancellationToken).ConfigureAwait(false);
-                if (!_res.IsSuccessStatusCode)
-                {
-                    await OnDeleteChannelFailed(_req, _res);
-                }
-                string _responseContent = await _res.Content.ReadAsStringAsync().ConfigureAwait(false);
-                return new HttpOperationResponse<Channel>
-                {
-                    Request = _req,
-                    Response = _res,
-                    Body = Client.Deserialize<Channel>(_responseContent),
-                };
-            }
-            catch (Exception)
-            {
-                _req?.Dispose();
-                _res?.Dispose();
-                throw;
-            }
         }
 
         partial void HandleFailedAddBuildToChannelRequest(RestApiException ex);
@@ -426,23 +473,63 @@ namespace Microsoft.DotNet.Maestro.Client
             CancellationToken cancellationToken = default
         )
         {
-            using (await AddBuildToChannelInternalAsync(
-                buildId,
-                channelId,
-                cancellationToken
-            ).ConfigureAwait(false))
+
+            if (buildId == default(int))
             {
-                return;
+                throw new ArgumentNullException(nameof(buildId));
+            }
+
+            if (channelId == default(int))
+            {
+                throw new ArgumentNullException(nameof(channelId));
+            }
+
+            const string apiVersion = "2019-01-16";
+
+            var _baseUri = Client.Options.BaseUri;
+            var _url = new RequestUriBuilder();
+            _url.Reset(_baseUri);
+            _url.AppendPath(
+                "/api/channels/{channelId}/builds/{buildId}".Replace("{channelId}", Uri.EscapeDataString(Client.Serialize(channelId))).Replace("{buildId}", Uri.EscapeDataString(Client.Serialize(buildId))),
+                false);
+
+            _url.AppendQuery("api-version", Client.Serialize(apiVersion));
+
+
+            using (var _req = Client.Pipeline.CreateRequest())
+            {
+                _req.Uri = _url;
+                _req.Method = RequestMethod.Post;
+
+                using (var _res = await Client.SendAsync(_req, cancellationToken).ConfigureAwait(false))
+                {
+                    if (_res.Status < 200 || _res.Status >= 300)
+                    {
+                        await OnAddBuildToChannelFailed(_req, _res).ConfigureAwait(false);
+                    }
+
+
+                    return;
+                }
             }
         }
 
-        internal async Task OnAddBuildToChannelFailed(HttpRequestMessage req, HttpResponseMessage res)
+        internal async Task OnAddBuildToChannelFailed(Request req, Response res)
         {
-            var content = await res.Content.ReadAsStringAsync().ConfigureAwait(false);
-            var ex = new RestApiException<ApiError>(
-                new HttpRequestMessageWrapper(req, null),
-                new HttpResponseMessageWrapper(res, content),
-                Client.Deserialize<ApiError>(content)
+            string content = null;
+            if (res.ContentStream != null)
+            {
+                using (var reader = new StreamReader(res.ContentStream))
+                {
+                    content = await reader.ReadToEndAsync().ConfigureAwait(false);
+                }
+            }
+
+            var ex = new RestApiException<Models.ApiError>(
+                req,
+                res,
+                content,
+                Client.Deserialize<Models.ApiError>(content)
                 );
             HandleFailedAddBuildToChannelRequest(ex);
             HandleFailedRequest(ex);
@@ -450,65 +537,76 @@ namespace Microsoft.DotNet.Maestro.Client
             throw ex;
         }
 
-        internal async Task<HttpOperationResponse> AddBuildToChannelInternalAsync(
+        partial void HandleFailedRemoveBuildFromChannelRequest(RestApiException ex);
+
+        public async Task RemoveBuildFromChannelAsync(
             int buildId,
             int channelId,
             CancellationToken cancellationToken = default
         )
         {
-            if (buildId == default)
+
+            if (buildId == default(int))
             {
                 throw new ArgumentNullException(nameof(buildId));
             }
 
-            if (channelId == default)
+            if (channelId == default(int))
             {
                 throw new ArgumentNullException(nameof(channelId));
             }
 
             const string apiVersion = "2019-01-16";
 
-            var _path = "/api/channels/{channelId}/builds/{buildId}";
-            _path = _path.Replace("{channelId}", Client.Serialize(channelId));
-            _path = _path.Replace("{buildId}", Client.Serialize(buildId));
+            var _baseUri = Client.Options.BaseUri;
+            var _url = new RequestUriBuilder();
+            _url.Reset(_baseUri);
+            _url.AppendPath(
+                "/api/channels/{channelId}/builds/{buildId}".Replace("{channelId}", Uri.EscapeDataString(Client.Serialize(channelId))).Replace("{buildId}", Uri.EscapeDataString(Client.Serialize(buildId))),
+                false);
 
-            var _query = new QueryBuilder();
-            _query.Add("api-version", Client.Serialize(apiVersion));
+            _url.AppendQuery("api-version", Client.Serialize(apiVersion));
 
-            var _uriBuilder = new UriBuilder(Client.BaseUri);
-            _uriBuilder.Path = _uriBuilder.Path.TrimEnd('/') + _path;
-            _uriBuilder.Query = _query.ToString();
-            var _url = _uriBuilder.Uri;
 
-            HttpRequestMessage _req = null;
-            HttpResponseMessage _res = null;
-            try
+            using (var _req = Client.Pipeline.CreateRequest())
             {
-                _req = new HttpRequestMessage(HttpMethod.Post, _url);
+                _req.Uri = _url;
+                _req.Method = RequestMethod.Delete;
 
-                if (Client.Credentials != null)
+                using (var _res = await Client.SendAsync(_req, cancellationToken).ConfigureAwait(false))
                 {
-                    await Client.Credentials.ProcessHttpRequestAsync(_req, cancellationToken).ConfigureAwait(false);
-                }
+                    if (_res.Status < 200 || _res.Status >= 300)
+                    {
+                        await OnRemoveBuildFromChannelFailed(_req, _res).ConfigureAwait(false);
+                    }
 
-                _res = await Client.SendAsync(_req, cancellationToken).ConfigureAwait(false);
-                if (!_res.IsSuccessStatusCode)
-                {
-                    await OnAddBuildToChannelFailed(_req, _res);
+
+                    return;
                 }
-                string _responseContent = await _res.Content.ReadAsStringAsync().ConfigureAwait(false);
-                return new HttpOperationResponse
-                {
-                    Request = _req,
-                    Response = _res,
-                };
             }
-            catch (Exception)
+        }
+
+        internal async Task OnRemoveBuildFromChannelFailed(Request req, Response res)
+        {
+            string content = null;
+            if (res.ContentStream != null)
             {
-                _req?.Dispose();
-                _res?.Dispose();
-                throw;
+                using (var reader = new StreamReader(res.ContentStream))
+                {
+                    content = await reader.ReadToEndAsync().ConfigureAwait(false);
+                }
             }
+
+            var ex = new RestApiException<Models.ApiError>(
+                req,
+                res,
+                content,
+                Client.Deserialize<Models.ApiError>(content)
+                );
+            HandleFailedRemoveBuildFromChannelRequest(ex);
+            HandleFailedRequest(ex);
+            Client.OnFailedRequest(ex);
+            throw ex;
         }
 
         partial void HandleFailedAddPipelineToChannelRequest(RestApiException ex);
@@ -519,89 +617,68 @@ namespace Microsoft.DotNet.Maestro.Client
             CancellationToken cancellationToken = default
         )
         {
-            using (await AddPipelineToChannelInternalAsync(
-                channelId,
-                pipelineId,
-                cancellationToken
-            ).ConfigureAwait(false))
-            {
-                return;
-            }
-        }
 
-        internal async Task OnAddPipelineToChannelFailed(HttpRequestMessage req, HttpResponseMessage res)
-        {
-            var content = await res.Content.ReadAsStringAsync().ConfigureAwait(false);
-            var ex = new RestApiException<ApiError>(
-                new HttpRequestMessageWrapper(req, null),
-                new HttpResponseMessageWrapper(res, content),
-                Client.Deserialize<ApiError>(content)
-                );
-            HandleFailedAddPipelineToChannelRequest(ex);
-            HandleFailedRequest(ex);
-            Client.OnFailedRequest(ex);
-            throw ex;
-        }
-
-        internal async Task<HttpOperationResponse> AddPipelineToChannelInternalAsync(
-            int channelId,
-            int pipelineId,
-            CancellationToken cancellationToken = default
-        )
-        {
-            if (channelId == default)
+            if (channelId == default(int))
             {
                 throw new ArgumentNullException(nameof(channelId));
             }
 
-            if (pipelineId == default)
+            if (pipelineId == default(int))
             {
                 throw new ArgumentNullException(nameof(pipelineId));
             }
 
             const string apiVersion = "2019-01-16";
 
-            var _path = "/api/channels/{channelId}/pipelines/{pipelineId}";
-            _path = _path.Replace("{channelId}", Client.Serialize(channelId));
-            _path = _path.Replace("{pipelineId}", Client.Serialize(pipelineId));
+            var _baseUri = Client.Options.BaseUri;
+            var _url = new RequestUriBuilder();
+            _url.Reset(_baseUri);
+            _url.AppendPath(
+                "/api/channels/{channelId}/pipelines/{pipelineId}".Replace("{channelId}", Uri.EscapeDataString(Client.Serialize(channelId))).Replace("{pipelineId}", Uri.EscapeDataString(Client.Serialize(pipelineId))),
+                false);
 
-            var _query = new QueryBuilder();
-            _query.Add("api-version", Client.Serialize(apiVersion));
+            _url.AppendQuery("api-version", Client.Serialize(apiVersion));
 
-            var _uriBuilder = new UriBuilder(Client.BaseUri);
-            _uriBuilder.Path = _uriBuilder.Path.TrimEnd('/') + _path;
-            _uriBuilder.Query = _query.ToString();
-            var _url = _uriBuilder.Uri;
 
-            HttpRequestMessage _req = null;
-            HttpResponseMessage _res = null;
-            try
+            using (var _req = Client.Pipeline.CreateRequest())
             {
-                _req = new HttpRequestMessage(HttpMethod.Post, _url);
+                _req.Uri = _url;
+                _req.Method = RequestMethod.Post;
 
-                if (Client.Credentials != null)
+                using (var _res = await Client.SendAsync(_req, cancellationToken).ConfigureAwait(false))
                 {
-                    await Client.Credentials.ProcessHttpRequestAsync(_req, cancellationToken).ConfigureAwait(false);
-                }
+                    if (_res.Status < 200 || _res.Status >= 300)
+                    {
+                        await OnAddPipelineToChannelFailed(_req, _res).ConfigureAwait(false);
+                    }
 
-                _res = await Client.SendAsync(_req, cancellationToken).ConfigureAwait(false);
-                if (!_res.IsSuccessStatusCode)
-                {
-                    await OnAddPipelineToChannelFailed(_req, _res);
+
+                    return;
                 }
-                string _responseContent = await _res.Content.ReadAsStringAsync().ConfigureAwait(false);
-                return new HttpOperationResponse
-                {
-                    Request = _req,
-                    Response = _res,
-                };
             }
-            catch (Exception)
+        }
+
+        internal async Task OnAddPipelineToChannelFailed(Request req, Response res)
+        {
+            string content = null;
+            if (res.ContentStream != null)
             {
-                _req?.Dispose();
-                _res?.Dispose();
-                throw;
+                using (var reader = new StreamReader(res.ContentStream))
+                {
+                    content = await reader.ReadToEndAsync().ConfigureAwait(false);
+                }
             }
+
+            var ex = new RestApiException<Models.ApiError>(
+                req,
+                res,
+                content,
+                Client.Deserialize<Models.ApiError>(content)
+                );
+            HandleFailedAddPipelineToChannelRequest(ex);
+            HandleFailedRequest(ex);
+            Client.OnFailedRequest(ex);
+            throw ex;
         }
 
         partial void HandleFailedDeletePipelineFromChannelRequest(RestApiException ex);
@@ -612,89 +689,68 @@ namespace Microsoft.DotNet.Maestro.Client
             CancellationToken cancellationToken = default
         )
         {
-            using (await DeletePipelineFromChannelInternalAsync(
-                channelId,
-                pipelineId,
-                cancellationToken
-            ).ConfigureAwait(false))
-            {
-                return;
-            }
-        }
 
-        internal async Task OnDeletePipelineFromChannelFailed(HttpRequestMessage req, HttpResponseMessage res)
-        {
-            var content = await res.Content.ReadAsStringAsync().ConfigureAwait(false);
-            var ex = new RestApiException<ApiError>(
-                new HttpRequestMessageWrapper(req, null),
-                new HttpResponseMessageWrapper(res, content),
-                Client.Deserialize<ApiError>(content)
-                );
-            HandleFailedDeletePipelineFromChannelRequest(ex);
-            HandleFailedRequest(ex);
-            Client.OnFailedRequest(ex);
-            throw ex;
-        }
-
-        internal async Task<HttpOperationResponse> DeletePipelineFromChannelInternalAsync(
-            int channelId,
-            int pipelineId,
-            CancellationToken cancellationToken = default
-        )
-        {
-            if (channelId == default)
+            if (channelId == default(int))
             {
                 throw new ArgumentNullException(nameof(channelId));
             }
 
-            if (pipelineId == default)
+            if (pipelineId == default(int))
             {
                 throw new ArgumentNullException(nameof(pipelineId));
             }
 
             const string apiVersion = "2019-01-16";
 
-            var _path = "/api/channels/{channelId}/pipelines/{pipelineId}";
-            _path = _path.Replace("{channelId}", Client.Serialize(channelId));
-            _path = _path.Replace("{pipelineId}", Client.Serialize(pipelineId));
+            var _baseUri = Client.Options.BaseUri;
+            var _url = new RequestUriBuilder();
+            _url.Reset(_baseUri);
+            _url.AppendPath(
+                "/api/channels/{channelId}/pipelines/{pipelineId}".Replace("{channelId}", Uri.EscapeDataString(Client.Serialize(channelId))).Replace("{pipelineId}", Uri.EscapeDataString(Client.Serialize(pipelineId))),
+                false);
 
-            var _query = new QueryBuilder();
-            _query.Add("api-version", Client.Serialize(apiVersion));
+            _url.AppendQuery("api-version", Client.Serialize(apiVersion));
 
-            var _uriBuilder = new UriBuilder(Client.BaseUri);
-            _uriBuilder.Path = _uriBuilder.Path.TrimEnd('/') + _path;
-            _uriBuilder.Query = _query.ToString();
-            var _url = _uriBuilder.Uri;
 
-            HttpRequestMessage _req = null;
-            HttpResponseMessage _res = null;
-            try
+            using (var _req = Client.Pipeline.CreateRequest())
             {
-                _req = new HttpRequestMessage(HttpMethod.Delete, _url);
+                _req.Uri = _url;
+                _req.Method = RequestMethod.Delete;
 
-                if (Client.Credentials != null)
+                using (var _res = await Client.SendAsync(_req, cancellationToken).ConfigureAwait(false))
                 {
-                    await Client.Credentials.ProcessHttpRequestAsync(_req, cancellationToken).ConfigureAwait(false);
-                }
+                    if (_res.Status < 200 || _res.Status >= 300)
+                    {
+                        await OnDeletePipelineFromChannelFailed(_req, _res).ConfigureAwait(false);
+                    }
 
-                _res = await Client.SendAsync(_req, cancellationToken).ConfigureAwait(false);
-                if (!_res.IsSuccessStatusCode)
-                {
-                    await OnDeletePipelineFromChannelFailed(_req, _res);
+
+                    return;
                 }
-                string _responseContent = await _res.Content.ReadAsStringAsync().ConfigureAwait(false);
-                return new HttpOperationResponse
-                {
-                    Request = _req,
-                    Response = _res,
-                };
             }
-            catch (Exception)
+        }
+
+        internal async Task OnDeletePipelineFromChannelFailed(Request req, Response res)
+        {
+            string content = null;
+            if (res.ContentStream != null)
             {
-                _req?.Dispose();
-                _res?.Dispose();
-                throw;
+                using (var reader = new StreamReader(res.ContentStream))
+                {
+                    content = await reader.ReadToEndAsync().ConfigureAwait(false);
+                }
             }
+
+            var ex = new RestApiException<Models.ApiError>(
+                req,
+                res,
+                content,
+                Client.Deserialize<Models.ApiError>(content)
+                );
+            HandleFailedDeletePipelineFromChannelRequest(ex);
+            HandleFailedRequest(ex);
+            Client.OnFailedRequest(ex);
+            throw ex;
         }
     }
 }

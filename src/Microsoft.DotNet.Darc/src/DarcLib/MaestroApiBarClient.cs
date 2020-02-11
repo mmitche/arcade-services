@@ -10,6 +10,7 @@ using System.Linq;
 using System.Net;
 using System.Threading;
 using System.Threading.Tasks;
+using Azure;
 using Microsoft.DotNet.Maestro.Client;
 using Microsoft.DotNet.Maestro.Client.Models;
 
@@ -198,7 +199,7 @@ namespace Microsoft.DotNet.DarcLib
         /// </summary>
         /// <param name="sourceRepo">Filter by the source repository of the subscription.</param>
         /// <param name="targetRepo">Filter by the target repository of the subscription.</param>
-        /// <param name="channelId">Filter by the target channel id of the subscription.</param>
+        /// <param name="channelId">Filter by the source channel id of the subscription.</param>
         /// <returns>Set of subscription.</returns>
         public async Task<IEnumerable<Subscription>> GetSubscriptionsAsync(string sourceRepo = null, string targetRepo = null, int? channelId = null)
         {
@@ -250,7 +251,7 @@ namespace Microsoft.DotNet.DarcLib
             {
                 return await _barClient.Repository.GetMergePoliciesAsync(repository: repoUri, branch: branch);
             }
-            catch (RestApiException e) when (e.Response.StatusCode == HttpStatusCode.NotFound)
+            catch (RestApiException e) when (e.Response.Status == (int) HttpStatusCode.NotFound)
             {
                 // Return an empty list
                 return new List<MergePolicy>();
@@ -298,9 +299,9 @@ namespace Microsoft.DotNet.DarcLib
                                                  int? buildId = null,
                                                  bool? nonShipping = null)
         {
-            PagedResponse<Asset> pagedResponse = await _barClient.Assets.ListAssetsAsync(name: name,
+            AsyncPageable<Asset> pagedResponse = _barClient.Assets.ListAssetsAsync(name: name,
                 version: version, buildId: buildId, loadLocations: true);
-            return await pagedResponse.EnumerateAll().ToListAsync(CancellationToken.None);
+            return await pagedResponse.ToListAsync(CancellationToken.None);
         }
 
         /// <summary>
@@ -322,14 +323,19 @@ namespace Microsoft.DotNet.DarcLib
         /// <returns></returns>
         public async Task<IEnumerable<Build>> GetBuildsAsync(string repoUri, string commit)
         {
-            var pagedResponse = await _barClient.Builds.ListBuildsAsync(repository: repoUri,
+            AsyncPageable<Build> pagedResponse = _barClient.Builds.ListBuildsAsync(repository: repoUri,
                 commit: commit, loadCollections: true);
-            return await pagedResponse.EnumerateAll().ToListAsync(CancellationToken.None);
+            return await pagedResponse.ToListAsync(CancellationToken.None);
         }
 
-        public async Task AssignBuildToChannel(int buildId, int channelId)
+        public async Task AssignBuildToChannelAsync(int buildId, int channelId)
         {
             await _barClient.Channels.AddBuildToChannelAsync(buildId, channelId);
+        }
+
+        public async Task DeleteBuildFromChannelAsync(int buildId, int channelId)
+        {
+            await _barClient.Channels.RemoveBuildFromChannelAsync(buildId, channelId);
         }
 
         #endregion
@@ -343,6 +349,23 @@ namespace Microsoft.DotNet.DarcLib
         {
             return (await _barClient.Channels.ListChannelsAsync())
                 .FirstOrDefault(c => c.Name.Equals(channel, StringComparison.OrdinalIgnoreCase));
+        }
+
+        /// <summary>
+        ///     Retrieve a specific channel by id.
+        /// </summary>
+        /// <param name="channel">Channel id.</param>
+        /// <returns>Channel or null if not found.</returns>
+        public async Task<Channel> GetChannelAsync(int channel)
+        {
+            try
+            {
+                return await _barClient.Channels.GetChannelAsync(channel);
+            }
+            catch (RestApiException e) when (e.Response.Status == (int) HttpStatusCode.NotFound)
+            {
+                return null;
+            }
         }
 
         /// <summary>
@@ -368,6 +391,52 @@ namespace Microsoft.DotNet.DarcLib
             return _barClient.Builds.GetLatestAsync(repository: repoUri,
                                                     channelId: channelId,
                                                     loadCollections: true);
+        }
+
+        /// <summary>
+        ///     Update an existing build.
+        /// </summary>
+        /// <param name="buildId">Build to update</param>
+        /// <param name="buildUpdate">Updated build info</param>
+        /// <returns>Updated build</returns>
+        public Task<Build> UpdateBuildAsync(int buildId, BuildUpdate buildUpdate)
+        {
+            return _barClient.Builds.UpdateAsync(buildUpdate, buildId);
+        }
+
+        /// <summary>
+        ///     Creates a new goal or updates the existing goal (in minutes) for a Defintion in a Channel.
+        /// </summary>
+        /// <param name="channel">Name of channel. For eg: .Net Core 5 Dev</param>
+        /// <param name="definitionId">Azure DevOps DefinitionId.</param>
+        /// <param name="minutes">Goal in minutes for a Definition in a Channel.</param>
+        /// <returns>Async task.</returns>
+        public Task<Goal> SetGoalAsync(string channel, int definitionId, int minutes)
+        {
+            var jsonData = new GoalRequestJson(minutes: minutes);
+            return _barClient.Goal.CreateAsync(body: jsonData, channelName : channel, definitionId : definitionId);
+        }
+
+        /// <summary>
+        ///     Gets goal (in minutes) for a Defintion in a Channel.
+        /// </summary>
+        /// <param name="channel">Name of channel. For eg: .Net Core 5 Dev</param>
+        /// <param name="definitionId">Azure DevOps DefinitionId.</param>
+        /// <returns>Goal in minutes</returns>
+        public Task<Goal> GetGoalAsync(string channel, int definitionId)
+        {
+            return _barClient.Goal.GetGoalTimesAsync(channelName: channel, definitionId: definitionId);
+        }
+
+        /// <summary>
+        ///     Gets official and pr build time (in minutes) for a default channel summarized over a number of days.
+        /// </summary>
+        /// <param name="defaultChannelId">Id of the default channel</param>
+        /// <param name="days">Number of days to summarize over</param>
+        /// <returns>Returns BuildTime in minutes.</returns>
+        public Task<BuildTime> GetBuildTimeAsync(int defaultChannelId, int days)
+        {
+            return _barClient.BuildTime.GetBuildTimesAsync(id: defaultChannelId, days: days);
         }
     }
 }

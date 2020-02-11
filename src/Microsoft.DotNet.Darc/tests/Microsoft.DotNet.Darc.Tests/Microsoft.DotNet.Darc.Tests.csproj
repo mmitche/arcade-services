@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>netcoreapp2.1</TargetFramework>
@@ -9,6 +9,7 @@
   <ItemGroup>
     <PackageReference Include="LibGit2Sharp" Version="$(LibGit2SharpVersion)" />
     <PackageReference Include="Moq" Version="4.8.2" />
+    <PackageReference Include="Microsoft.CodeCoverage" Version="$(MicrosoftCodeCoverageVersion)" />
   </ItemGroup>
 
   <ItemGroup>
@@ -142,6 +143,12 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
     <None Update="inputs\AddProductDependency6\output\global.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="inputs\DependencyFlowGraph\IncludeBuildTimes\input.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="inputs\DependencyFlowGraph\IncludeBuildTimes\output.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
     <None Update="inputs\DependencyGraph\input\arcade\044fa99d22e576fcfaf63f09ee9bba821855dddb\eng\Version.Details.xml">
@@ -768,6 +775,54 @@
     <None Update="inputs\EmptyVersions2\output\global.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <None Update="inputs\NugetConfigFiles\AddFeedsToNuGetConfigWithoutManagedFeeds\NuGet.input.config">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="inputs\NugetConfigFiles\AddFeedsToNuGetConfigWithoutManagedFeeds\NuGet.output.config">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="inputs\NugetConfigFiles\PreserveManagedFromFromOutside\NuGet.input.config">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="inputs\NugetConfigFiles\PreserveManagedFromFromOutside\NuGet.output.config">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="inputs\NugetConfigFiles\WhiteSpaceCorrectlyFormatted\NuGet.input.config">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="inputs\NugetConfigFiles\WhiteSpaceCorrectlyFormatted\NuGet.output.config">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="inputs\NugetConfigFiles\NoManagedFeedsToAdd\NuGet.input.config">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="inputs\NugetConfigFiles\NoManagedFeedsToAdd\NuGet.output.config">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="inputs\NugetConfigFiles\PreserveCommentsInRightLocationsWhenReplacing\NuGet.input.config">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="inputs\NugetConfigFiles\PreserveCommentsInRightLocationsWhenReplacing\NuGet.output.config">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="inputs\NugetConfigFiles\PreserveCommentsInRightLocationsWithNoExistingBlock\NuGet.input.config">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="inputs\NugetConfigFiles\PreserveCommentsInRightLocationsWithNoExistingBlock\NuGet.output.config">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="inputs\NugetConfigFiles\RemoveAllManagedFeeds\NuGet.input.config">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="inputs\NugetConfigFiles\RemoveAllManagedFeeds\NuGet.output.config">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="inputs\NugetConfigFiles\ReplaceExistingFeedsWithNewOnes\NuGet.input.config">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="inputs\NugetConfigFiles\ReplaceExistingFeedsWithNewOnes\NuGet.output.config">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
     <None Update="inputs\SupportAlternateVersionPropertyFormats1\input\eng\Version.Details.xml">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
@@ -936,6 +991,10 @@
     <None Update="inputs\UpdateDependencies4\output\global.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Folder Include="inputs\NugetConfigFiles\NoManagedFeedsToAdd\" />
   </ItemGroup>
   
 </Project>

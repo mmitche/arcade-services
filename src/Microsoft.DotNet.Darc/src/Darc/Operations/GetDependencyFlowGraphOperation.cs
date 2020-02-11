@@ -27,6 +27,9 @@ namespace Microsoft.DotNet.Darc.Operations
             _options = options;
         }
 
+        const int engLatestChannelId = 2;
+        const int eng3ChannelId = 344;
+
         public override async Task<int> ExecuteAsync()
         {
             try
@@ -34,19 +37,35 @@ namespace Microsoft.DotNet.Darc.Operations
                 RemoteFactory remoteFactory = new RemoteFactory(_options);
                 var barOnlyRemote = await remoteFactory.GetBarOnlyRemoteAsync(Logger);
 
+                Channel engLatestChannel = await barOnlyRemote.GetChannelAsync(engLatestChannelId);
+                Channel eng3Channel = await barOnlyRemote.GetChannelAsync(eng3ChannelId);
+
                 List<DefaultChannel> defaultChannels = (await barOnlyRemote.GetDefaultChannelsAsync()).ToList();
-                defaultChannels.Add(
-                    new DefaultChannel(0, "https://github.com/dotnet/arcade", true)
-                    {
-                        Branch = "refs/heads/master",
-                        Channel = await barOnlyRemote.GetChannelAsync(".NET Tools - Latest")
-                    }
-                );
+                if (engLatestChannel != null)
+                {
+                    defaultChannels.Add(
+                        new DefaultChannel(0, "https://github.com/dotnet/arcade", true)
+                        {
+                            Branch = "master",
+                            Channel = engLatestChannel
+                        }
+                    );
+                }
+                if (eng3Channel != null)
+                {
+                    defaultChannels.Add(
+                        new DefaultChannel(0, "https://github.com/dotnet/arcade", true)
+                        {
+                            Branch = "release/3.x",
+                            Channel = eng3Channel
+                        }
+                    );
+                }
                 List<Subscription> subscriptions = (await barOnlyRemote.GetSubscriptionsAsync()).ToList();
 
                 // Build, then prune out what we don't want to see if the user specified
                 // channels.
-                DependencyFlowGraph flowGraph = DependencyFlowGraph.Build(defaultChannels, subscriptions);
+                DependencyFlowGraph flowGraph = await DependencyFlowGraph.BuildAsync(defaultChannels, subscriptions, barOnlyRemote, _options.Days);
 
                 Channel targetChannel = null;
                 if (!string.IsNullOrEmpty(_options.Channel))
@@ -61,10 +80,19 @@ namespace Microsoft.DotNet.Darc.Operations
 
                 if (targetChannel != null)
                 {
-                    flowGraph.PruneGraph(node => IsInterestingNode(targetChannel, node), edge => IsInterestingEdge(edge));
+                    flowGraph.PruneGraph(
+                        node => DependencyFlowGraph.IsInterestingNode(targetChannel.Name, node), 
+                        edge => DependencyFlowGraph.IsInterestingEdge(edge, _options.IncludeDisabledSubscriptions, _options.IncludedFrequencies));
                 }
 
-                await LogGraphViz(targetChannel, flowGraph);
+                if (_options.IncludeBuildTimes)
+                {
+                    flowGraph.MarkBackEdges();
+                    flowGraph.CalculateLongestBuildPaths();
+                    flowGraph.MarkLongestBuildPath();
+                }
+
+                await LogGraphVizAsync(targetChannel, flowGraph, _options.IncludeBuildTimes);
 
                 return Constants.SuccessCode;
             }
@@ -76,51 +104,24 @@ namespace Microsoft.DotNet.Darc.Operations
         }
 
         /// <summary>
-        ///     If pruning the graph is desired, determine whether a node is interesting.
-        /// </summary>
-        /// <param name="node">Node</param>
-        /// <returns>True if the node is interesting, false otherwise</returns>
-        private bool IsInterestingNode(Channel targetChannel, DependencyFlowNode node)
-        {
-            return node.OutputChannels.Any(c => c == targetChannel.Name);
-        }
-
-        /// <summary>
-        ///     If pruning the graph is desired, determine whether an edge is interesting
-        /// </summary>
-        /// <param name="edge">Edge</param>
-        /// <returns>True if the edge is interesting, false otherwise.</returns>
-        private bool IsInterestingEdge(DependencyFlowEdge edge)
-        {
-            if (!_options.IncludeDisabledSubscriptions && !edge.Subscription.Enabled)
-            {
-                return false;
-            }
-            if (!_options.IncludedFrequencies.Any(s => s.Equals(edge.Subscription.Policy.UpdateFrequency.ToString(), StringComparison.OrdinalIgnoreCase)))
-            {
-                return false;
-            }
-            return true;
-        }
-
-        /// <summary>
         ///     Get an edge style
         /// </summary>
         /// <param name="edge"></param>
         /// <returns></returns>
         private string GetEdgeStyle(DependencyFlowEdge edge)
         {
+            string color = edge.OnLongestBuildPath ? "color=\"red:invis:red\"" : "";
             switch (edge.Subscription.Policy.UpdateFrequency)
             {
                 case UpdateFrequency.EveryBuild:
                     // Solid
-                    return "style=bold";
+                    return $"{color} style=bold";
                 case UpdateFrequency.EveryDay:
                 case UpdateFrequency.TwiceDaily:
                 case UpdateFrequency.EveryWeek:
-                    return "style=dashed";
+                    return $"{color} style=dashed";
                 case UpdateFrequency.None:
-                    return "style=dotted";
+                    return $"{color} style=dotted";
                 default:
                     throw new NotImplementedException("Unknown update frequency");
             }
@@ -141,7 +142,7 @@ namespace Microsoft.DotNet.Darc.Operations
         /// For more info see https://www.graphviz.org/
         /// </remarks>
         /// <returns>Async task</returns>
-        private async Task LogGraphViz(Channel targetChannel, DependencyFlowGraph graph)
+        private async Task LogGraphVizAsync(Channel targetChannel, DependencyFlowGraph graph, bool includeBuildTimes)
         {
             StringBuilder subgraphClusterWriter = null;
             bool writeToSubgraphCluster = targetChannel != null;
@@ -160,11 +161,13 @@ namespace Microsoft.DotNet.Darc.Operations
                 {
                     StringBuilder nodeBuilder = new StringBuilder();
 
+                    string style = node.OnLongestBuildPath ? "style=\"diagonals,bold\" color=red" : "";
+
                     // First add the node name
                     nodeBuilder.Append($"    {UxHelpers.CalculateGraphVizNodeName(node)}");
 
                     // Then add the label.  label looks like [label="<info here>"]
-                    nodeBuilder.Append("[label=\"");
+                    nodeBuilder.Append($"[{style}\nlabel=\"");
 
                     // Append friendly repo name
                     nodeBuilder.Append(UxHelpers.GetSimpleRepoName(node.Repository));
@@ -172,6 +175,24 @@ namespace Microsoft.DotNet.Darc.Operations
 
                     // Append branch name
                     nodeBuilder.Append(node.Branch);
+
+                    if (includeBuildTimes)
+                    {
+                        // Append best case
+                        nodeBuilder.Append(@"\n");
+                        nodeBuilder.Append($"Best Case: {Math.Round(node.BestCasePathTime, 2, MidpointRounding.AwayFromZero)} min");
+                        nodeBuilder.Append(@"\n");
+
+                        // Append worst case
+                        nodeBuilder.Append($"Worst Case: {Math.Round(node.WorstCasePathTime, 2, MidpointRounding.AwayFromZero)} min");
+                        nodeBuilder.Append(@"\n");
+
+                        // Append build times
+                        nodeBuilder.Append($"Official Build Time: {Math.Round(node.OfficialBuildTime, 2, MidpointRounding.AwayFromZero)} min");
+                        nodeBuilder.Append(@"\n");
+
+                        nodeBuilder.Append($"PR Build Time: {Math.Round(node.PrBuildTime, 2, MidpointRounding.AwayFromZero)} min");
+                    }
 
                     // Append end of label and end of node.
                     nodeBuilder.Append("\"];");
@@ -223,10 +244,20 @@ namespace Microsoft.DotNet.Darc.Operations
                 await writer.WriteLineAsync("        d[style = invis];");
                 await writer.WriteLineAsync("        e[style = invis];");
                 await writer.WriteLineAsync("        f[style = invis];");
+                await writer.WriteLineAsync("        g[style = \"diagonals,bold\" color=red];");
+                await writer.WriteLineAsync("        h[style = \"diagonals,bold\" color=red];");
                 await writer.WriteLineAsync("        c->d[label = \"Updated Every Build\", style = bold];");
                 await writer.WriteLineAsync("        a->b[label = \"Updated Every Day\", style = dashed];");
                 await writer.WriteLineAsync("        e->f[label = \"Disabled/Updated On-demand\", style = dotted];");
+                await writer.WriteLineAsync("        g->h[label = \"Longest Build Path\", color=\"red:invis:red\"];");
                 await writer.WriteLineAsync("    }");
+                await writer.WriteLineAsync("    subgraph cluster2{");
+                await writer.WriteLineAsync("        rankdir=BT;");
+                await writer.WriteLineAsync("        style=invis;");
+                await writer.WriteLineAsync("        note[shape=plaintext label=\"Best Case: Time through the graph assuming no dependency flow\nWorst Case: Time through the graph with dependency flow (PRs)\"];");
+                await writer.WriteLineAsync("    }");
+                await writer.WriteLineAsync("    d->note[lhead=cluster2, ltail=cluster1, style=invis];");
+                
             
                 await writer.WriteLineAsync("}");
             }

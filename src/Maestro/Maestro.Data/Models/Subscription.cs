@@ -6,6 +6,7 @@ using System;
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 using Microsoft.DotNet.DarcLib;
+using Microsoft.DotNet.Services.Utility;
 using Newtonsoft.Json;
 
 namespace Maestro.Data.Models
@@ -14,6 +15,7 @@ namespace Maestro.Data.Models
     {
         private string _sourceRepository;
         private string _targetRepository;
+        private string _branch;
 
         [Key]
         [DatabaseGenerated(DatabaseGeneratedOption.Identity)]
@@ -49,7 +51,17 @@ namespace Maestro.Data.Models
             }
         }
 
-        public string TargetBranch { get; set; }
+        public string TargetBranch
+        {
+            get
+            {
+                return GitHelpers.NormalizeBranchName(_branch);
+            }
+            set
+            {
+                _branch = GitHelpers.NormalizeBranchName(value);
+            }
+        }
 
         [Column("Policy")]
         public string PolicyString { get; set; }

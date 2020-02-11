@@ -6,11 +6,16 @@ variables:
     value: true
   - name: _DotNetArtifactsCategory
     value: .NETCore
+  - ${{ if and(ne(variables['System.TeamProject'], 'public'), notin(variables['Build.Reason'], 'PullRequest')) }}:
+    - group: SDL_Settings
 
 # CI and PR triggers
 trigger:
-- master
-- production
+  batch: true
+  branches:
+    include:
+    - master
+    - production
 pr:
 - master
 - production
@@ -35,10 +40,10 @@ stages:
         pool:
           ${{ if or(eq(variables['System.TeamProject'], 'public'), in(variables['Build.Reason'], 'PullRequest')) }}:
             name: NetCorePublic-Pool
-            queue: BuildPool.Windows.10.Amd64.VS2017.Open
+            queue: BuildPool.Windows.10.Amd64.VS2019.Open
           ${{ if and(ne(variables['System.TeamProject'], 'public'), notin(variables['Build.Reason'], 'PullRequest')) }}:
             name: NetCoreInternal-Pool
-            queue: BuildPool.Windows.10.Amd64.VS2017
+            queue: BuildPool.Windows.10.Amd64.VS2019
 
         variables:
         - _InternalBuildArgs: ''
@@ -71,11 +76,13 @@ stages:
               
         strategy:
           matrix:
-            debug_configuration:
-              _BuildConfig: Debug
-              _PublishType: none
-              _SignType: test
-              _DotNetPublishToBlobFeed : false
+            # Only build debug in non-official builds
+            ${{ if or(eq(variables['System.TeamProject'], 'public'), in(variables['Build.Reason'], 'PullRequest')) }}:
+                debug_configuration:
+                  _BuildConfig: Debug
+                  _PublishType: none
+                  _SignType: test
+                  _DotNetPublishToBlobFeed : false
             release_configuration:
               _BuildConfig: Release
               # PRs or external builds are not signed.
@@ -97,7 +104,7 @@ stages:
 
         - task: NodeTool@0
           inputs:
-            versionSpec: '>=11'
+            versionSpec: 12.x
 
         - task: NuGetCommand@2
           displayName: Restore Packages
@@ -117,6 +124,8 @@ stages:
           displayName: Build / Publish
           condition: succeeded()
 
+        - template: /eng/test.yaml
+
         - ${{ if and(ne(variables['System.TeamProject'], 'public'), notin(variables['Build.Reason'], 'PullRequest')) }}:
         
           ## Prepare service fabric artifact
@@ -129,6 +138,10 @@ stages:
               robocopy src/Maestro/MaestroApplication/ApplicationParameters $(Build.ArtifactStagingDirectory)\ServiceFabric\MaestroApplication\projectartifacts\ApplicationParameters /S *.xml
               exit 0
             displayName: Copy Maestro Project Artifacts
+
+          - publish: $(Build.ArtifactStagingDirectory)\ServiceFabric\MaestroApplication
+            artifact: MaestroApplication
+            displayName: Publish MaestroApplication
             
           - task: ServiceFabricUpdateManifests@2
             inputs:
@@ -140,12 +153,41 @@ stages:
               exit 0
             displayName: Copy Telemetry Project Artifacts
 
-          - task: PublishBuildArtifacts@1
-            displayName: Publish Service Fabric Artifact
+          - publish: $(Build.ArtifactStagingDirectory)\ServiceFabric\TelemetryApplication
+            artifact: TelemetryApplication
+            displayName: Publish TelemetryApplication
+
+          - script: $(Build.SourcesDirectory)\.dotnet\dotnet publish -o $(Build.ArtifactStagingDirectory)\DotNet.Status.Web\publish -f netcoreapp2.1
+            workingDirectory: src/DotNet.Status.Web
+            displayName: dotnet publish DotNet.Status.Web
+
+          - task: ArchiveFiles@2
             inputs:
-              PathtoPublish: $(Build.ArtifactStagingDirectory)\ServiceFabric\
-              ArtifactName: ServiceFabric
-              ArtifactType: Container
+              rootFolderOrFile: $(Build.ArtifactStagingDirectory)/DotNet.Status.Web/publish
+              includeRootFolder: false
+              archiveType: zip
+              archiveFile: $(Build.ArtifactStagingDirectory)/DotNet.Status.Web/package/DotNetStatus.zip
+              replaceExistingArchive: true
+
+          - publish: $(Build.ArtifactStagingDirectory)/DotNet.Status.Web/package
+            artifact: DotNetStatus
+            displayName: Publish DotNet.Status.Web
+          
+          - script: $(Build.SourcesDirectory)\.dotnet\dotnet publish -o $(Build.ArtifactStagingDirectory)\RolloutScorerAzureFunction\publish -f netcoreapp3.0
+            workingDirectory: src/RolloutScorer/RolloutScorerAzureFunction
+            displayName: dotnet publish RolloutScorerAzureFunction
+
+          - task: ArchiveFiles@2
+            inputs:
+              rootFolderOrFile: $(Build.ArtifactStagingDirectory)/RolloutScorerAzureFunction/publish
+              includeRootFolder: false
+              archiveType: zip
+              archiveFile: $(Build.ArtifactStagingDirectory)/RolloutScorerAzureFunction/package/RolloutScorer.zip
+              replaceExistingArchive: true
+
+          - publish: $(Build.ArtifactStagingDirectory)/RolloutScorerAzureFunction/package
+            artifact: RolloutScorer
+            displayName: Publish RolloutScorerAzureFunction
           
           ## Prepare database update artifact
           - script: $(Build.SourcesDirectory)\.dotnet\dotnet publish -o $(Build.ArtifactStagingDirectory)\Maestro.Data -f netcoreapp2.1
@@ -174,12 +216,10 @@ stages:
               contents: '*'
               targetFolder: $(Build.ArtifactStagingDirectory)\eng
               
-          - task: PublishBuildArtifacts@1
+          - publish: $(Build.ArtifactStagingDirectory)\eng
+            artifact: ReleaseUtilities
             displayName: Publish Release Utilities Artifact
-            inputs:
-              PathtoPublish: $(Build.ArtifactStagingDirectory)\eng
-              ArtifactName: ReleaseUtilities
-              ArtifactType: Container
+
           ## Prepare scenario tests artifact
           - task: CopyFiles@2
             displayName: Prepare Scenario test scripts
@@ -194,6 +234,9 @@ stages:
               PathtoPublish: $(Build.ArtifactStagingDirectory)\tests\scenarios
               ArtifactName: ScenarioTests
               ArtifactType: Container
+
+          - publish: $(Build.SourcesDirectory)\artifacts\bin\Maestro.ScenarioTests\$(_BuildConfig)\netcoreapp2.1\publish
+            artifact: Maestro.ScenarioTests
 
           # Reenable tagging when stable package versions can be generated.
           # https://github.com/dotnet/arcade-services/issues/59
@@ -210,12 +253,12 @@ stages:
       SDLValidationParameters:
         enable: true
         params: '-SourceToolsList @("policheck","credscan")
-        -TsaInstanceURL "https://devdiv.visualstudio.com/"
-        -TsaProjectName "DEVDIV"
-        -TsaNotificationEmail "dnceng@microsoft.com"
-        -TsaCodebaseAdmin "REDMOND\dn-bot"
-        -TsaBugAreaPath "DevDiv\NET\NET Core "
-        -TsaIterationPath "DevDiv"
+        -TsaInstanceURL $(_TsaInstanceURL)
+        -TsaProjectName $(_TsaProjectName)
+        -TsaNotificationEmail $(_TsaNotificationEmail)
+        -TsaCodebaseAdmin $(_TsaCodebaseAdmin)
+        -TsaBugAreaPath $(_TsaBugAreaPath)
+        -TsaIterationPath $(_TsaIterationPath)
         -TsaRepositoryName "Arcade-Services"
         -TsaCodebaseName "Arcade-Services"
         -TsaPublish $True'

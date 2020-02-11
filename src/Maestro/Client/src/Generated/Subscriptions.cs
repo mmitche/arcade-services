@@ -1,19 +1,20 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
-using System.Net.Http;
-using System.Net.Http.Headers;
+using System.IO;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Rest;
-using Microsoft.DotNet.Maestro.Client.Models;
+using Azure;
+using Azure.Core;
+
+
 
 namespace Microsoft.DotNet.Maestro.Client
 {
     public partial interface ISubscriptions
     {
-        Task<IImmutableList<Subscription>> ListSubscriptionsAsync(
+        Task<IImmutableList<Models.Subscription>> ListSubscriptionsAsync(
             int? channelId = default,
             bool? enabled = default,
             string sourceRepository = default,
@@ -21,28 +22,28 @@ namespace Microsoft.DotNet.Maestro.Client
             CancellationToken cancellationToken = default
         );
 
-        Task<Subscription> CreateAsync(
-            SubscriptionData body,
+        Task<Models.Subscription> CreateAsync(
+            Models.SubscriptionData body,
             CancellationToken cancellationToken = default
         );
 
-        Task<Subscription> GetSubscriptionAsync(
+        Task<Models.Subscription> GetSubscriptionAsync(
             Guid id,
             CancellationToken cancellationToken = default
         );
 
-        Task<Subscription> DeleteSubscriptionAsync(
+        Task<Models.Subscription> DeleteSubscriptionAsync(
             Guid id,
             CancellationToken cancellationToken = default
         );
 
-        Task<Subscription> UpdateSubscriptionAsync(
+        Task<Models.Subscription> UpdateSubscriptionAsync(
             Guid id,
-            SubscriptionUpdate body = default,
+            Models.SubscriptionUpdate body = default,
             CancellationToken cancellationToken = default
         );
 
-        Task<Subscription> TriggerSubscriptionAsync(
+        Task<Models.Subscription> TriggerSubscriptionAsync(
             Guid id,
             CancellationToken cancellationToken = default
         );
@@ -51,7 +52,12 @@ namespace Microsoft.DotNet.Maestro.Client
             CancellationToken cancellationToken = default
         );
 
-        Task<PagedResponse<SubscriptionHistoryItem>> GetSubscriptionHistoryAsync(
+        AsyncPageable<Models.SubscriptionHistoryItem> GetSubscriptionHistoryAsync(
+            Guid id,
+            CancellationToken cancellationToken = default
+        );
+
+        Task<Page<Models.SubscriptionHistoryItem>> GetSubscriptionHistoryPageAsync(
             Guid id,
             int? page = default,
             int? perPage = default,
@@ -79,7 +85,7 @@ namespace Microsoft.DotNet.Maestro.Client
 
         partial void HandleFailedListSubscriptionsRequest(RestApiException ex);
 
-        public async Task<IImmutableList<Subscription>> ListSubscriptionsAsync(
+        public async Task<IImmutableList<Models.Subscription>> ListSubscriptionsAsync(
             int? channelId = default,
             bool? enabled = default,
             string sourceRepository = default,
@@ -87,25 +93,78 @@ namespace Microsoft.DotNet.Maestro.Client
             CancellationToken cancellationToken = default
         )
         {
-            using (var _res = await ListSubscriptionsInternalAsync(
-                channelId,
-                enabled,
-                sourceRepository,
-                targetRepository,
-                cancellationToken
-            ).ConfigureAwait(false))
+
+            const string apiVersion = "2019-01-16";
+
+            var _baseUri = Client.Options.BaseUri;
+            var _url = new RequestUriBuilder();
+            _url.Reset(_baseUri);
+            _url.AppendPath(
+                "/api/subscriptions",
+                false);
+
+            if (!string.IsNullOrEmpty(sourceRepository))
             {
-                return _res.Body;
+                _url.AppendQuery("sourceRepository", Client.Serialize(sourceRepository));
+            }
+            if (!string.IsNullOrEmpty(targetRepository))
+            {
+                _url.AppendQuery("targetRepository", Client.Serialize(targetRepository));
+            }
+            if (channelId != default(int?))
+            {
+                _url.AppendQuery("channelId", Client.Serialize(channelId));
+            }
+            if (enabled != default(bool?))
+            {
+                _url.AppendQuery("enabled", Client.Serialize(enabled));
+            }
+            _url.AppendQuery("api-version", Client.Serialize(apiVersion));
+
+
+            using (var _req = Client.Pipeline.CreateRequest())
+            {
+                _req.Uri = _url;
+                _req.Method = RequestMethod.Get;
+
+                using (var _res = await Client.SendAsync(_req, cancellationToken).ConfigureAwait(false))
+                {
+                    if (_res.Status < 200 || _res.Status >= 300)
+                    {
+                        await OnListSubscriptionsFailed(_req, _res).ConfigureAwait(false);
+                    }
+
+                    if (_res.ContentStream == null)
+                    {
+                        await OnListSubscriptionsFailed(_req, _res).ConfigureAwait(false);
+                    }
+
+                    using (var _reader = new StreamReader(_res.ContentStream))
+                    {
+                        var _content = await _reader.ReadToEndAsync().ConfigureAwait(false);
+                        var _body = Client.Deserialize<IImmutableList<Models.Subscription>>(_content);
+                        return _body;
+                    }
+                }
             }
         }
 
-        internal async Task OnListSubscriptionsFailed(HttpRequestMessage req, HttpResponseMessage res)
+        internal async Task OnListSubscriptionsFailed(Request req, Response res)
         {
-            var content = await res.Content.ReadAsStringAsync().ConfigureAwait(false);
-            var ex = new RestApiException<ApiError>(
-                new HttpRequestMessageWrapper(req, null),
-                new HttpResponseMessageWrapper(res, content),
-                Client.Deserialize<ApiError>(content)
+            string content = null;
+            if (res.ContentStream != null)
+            {
+                using (var reader = new StreamReader(res.ContentStream))
+                {
+                    content = await reader.ReadToEndAsync().ConfigureAwait(false);
+                }
+            }
+
+            var ex = new RestApiException<Models.ApiError>(
+                req,
+                res,
+                content,
+                Client.Deserialize<Models.ApiError>(content)
                 );
             HandleFailedListSubscriptionsRequest(ex);
             HandleFailedRequest(ex);
@@ -113,110 +172,15 @@ namespace Microsoft.DotNet.Maestro.Client
             throw ex;
         }
 
-        internal async Task<HttpOperationResponse<IImmutableList<Subscription>>> ListSubscriptionsInternalAsync(
-            int? channelId = default,
-            bool? enabled = default,
-            string sourceRepository = default,
-            string targetRepository = default,
-            CancellationToken cancellationToken = default
-        )
-        {
-            const string apiVersion = "2019-01-16";
-
-            var _path = "/api/subscriptions";
-
-            var _query = new QueryBuilder();
-            if (!string.IsNullOrEmpty(sourceRepository))
-            {
-                _query.Add("sourceRepository", Client.Serialize(sourceRepository));
-            }
-            if (!string.IsNullOrEmpty(targetRepository))
-            {
-                _query.Add("targetRepository", Client.Serialize(targetRepository));
-            }
-            if (channelId != default)
-            {
-                _query.Add("channelId", Client.Serialize(channelId));
-            }
-            if (enabled != default)
-            {
-                _query.Add("enabled", Client.Serialize(enabled));
-            }
-            _query.Add("api-version", Client.Serialize(apiVersion));
-
-            var _uriBuilder = new UriBuilder(Client.BaseUri);
-            _uriBuilder.Path = _uriBuilder.Path.TrimEnd('/') + _path;
-            _uriBuilder.Query = _query.ToString();
-            var _url = _uriBuilder.Uri;
-
-            HttpRequestMessage _req = null;
-            HttpResponseMessage _res = null;
-            try
-            {
-                _req = new HttpRequestMessage(HttpMethod.Get, _url);
-
-                if (Client.Credentials != null)
-                {
-                    await Client.Credentials.ProcessHttpRequestAsync(_req, cancellationToken).ConfigureAwait(false);
-                }
-
-                _res = await Client.SendAsync(_req, cancellationToken).ConfigureAwait(false);
-                if (!_res.IsSuccessStatusCode)
-                {
-                    await OnListSubscriptionsFailed(_req, _res);
-                }
-                string _responseContent = await _res.Content.ReadAsStringAsync().ConfigureAwait(false);
-                return new HttpOperationResponse<IImmutableList<Subscription>>
-                {
-                    Request = _req,
-                    Response = _res,
-                    Body = Client.Deserialize<IImmutableList<Subscription>>(_responseContent),
-                };
-            }
-            catch (Exception)
-            {
-                _req?.Dispose();
-                _res?.Dispose();
-                throw;
-            }
-        }
-
         partial void HandleFailedCreateRequest(RestApiException ex);
 
-        public async Task<Subscription> CreateAsync(
-            SubscriptionData body,
+        public async Task<Models.Subscription> CreateAsync(
+            Models.SubscriptionData body,
             CancellationToken cancellationToken = default
         )
         {
-            using (var _res = await CreateInternalAsync(
-                body,
-                cancellationToken
-            ).ConfigureAwait(false))
-            {
-                return _res.Body;
-            }
-        }
 
-        internal async Task OnCreateFailed(HttpRequestMessage req, HttpResponseMessage res)
-        {
-            var content = await res.Content.ReadAsStringAsync().ConfigureAwait(false);
-            var ex = new RestApiException<ApiError>(
-                new HttpRequestMessageWrapper(req, content),
-                new HttpResponseMessageWrapper(res, content),
-                Client.Deserialize<ApiError>(content)
-                );
-            HandleFailedCreateRequest(ex);
-            HandleFailedRequest(ex);
-            Client.OnFailedRequest(ex);
-            throw ex;
-        }
-
-        internal async Task<HttpOperationResponse<Subscription>> CreateInternalAsync(
-            SubscriptionData body,
-            CancellationToken cancellationToken = default
-        )
-        {
-            if (body == default)
+            if (body == default(Models.SubscriptionData))
             {
                 throw new ArgumentNullException(nameof(body));
             }
@@ -228,84 +192,140 @@ namespace Microsoft.DotNet.Maestro.Client
 
             const string apiVersion = "2019-01-16";
 
-            var _path = "/api/subscriptions";
+            var _baseUri = Client.Options.BaseUri;
+            var _url = new RequestUriBuilder();
+            _url.Reset(_baseUri);
+            _url.AppendPath(
+                "/api/subscriptions",
+                false);
 
-            var _query = new QueryBuilder();
-            _query.Add("api-version", Client.Serialize(apiVersion));
+            _url.AppendQuery("api-version", Client.Serialize(apiVersion));
 
-            var _uriBuilder = new UriBuilder(Client.BaseUri);
-            _uriBuilder.Path = _uriBuilder.Path.TrimEnd('/') + _path;
-            _uriBuilder.Query = _query.ToString();
-            var _url = _uriBuilder.Uri;
 
-            HttpRequestMessage _req = null;
-            HttpResponseMessage _res = null;
-            try
+            using (var _req = Client.Pipeline.CreateRequest())
             {
-                _req = new HttpRequestMessage(HttpMethod.Post, _url);
+                _req.Uri = _url;
+                _req.Method = RequestMethod.Post;
 
-                string _requestContent = null;
-                if (body != default)
+                if (body != default(Models.SubscriptionData))
                 {
-                    _requestContent = Client.Serialize(body);
-                    _req.Content = new StringContent(_requestContent, Encoding.UTF8)
+                    _req.Content = RequestContent.Create(Encoding.UTF8.GetBytes(Client.Serialize(body)));
+                    _req.Headers.Add("Content-Type", "application/json; charset=utf-8");
+                }
+
+                using (var _res = await Client.SendAsync(_req, cancellationToken).ConfigureAwait(false))
+                {
+                    if (_res.Status < 200 || _res.Status >= 300)
                     {
-                        Headers =
-                        {
-                            ContentType = MediaTypeHeaderValue.Parse("application/json; charset=utf-8"),
-                        },
-                    };
-                }
+                        await OnCreateFailed(_req, _res).ConfigureAwait(false);
+                    }
 
-                if (Client.Credentials != null)
-                {
-                    await Client.Credentials.ProcessHttpRequestAsync(_req, cancellationToken).ConfigureAwait(false);
-                }
+                    if (_res.ContentStream == null)
+                    {
+                        await OnCreateFailed(_req, _res).ConfigureAwait(false);
+                    }
 
-                _res = await Client.SendAsync(_req, cancellationToken).ConfigureAwait(false);
-                if (!_res.IsSuccessStatusCode)
-                {
-                    await OnCreateFailed(_req, _res);
+                    using (var _reader = new StreamReader(_res.ContentStream))
+                    {
+                        var _content = await _reader.ReadToEndAsync().ConfigureAwait(false);
+                        var _body = Client.Deserialize<Models.Subscription>(_content);
+                        return _body;
+                    }
                 }
-                string _responseContent = await _res.Content.ReadAsStringAsync().ConfigureAwait(false);
-                return new HttpOperationResponse<Subscription>
-                {
-                    Request = _req,
-                    Response = _res,
-                    Body = Client.Deserialize<Subscription>(_responseContent),
-                };
             }
-            catch (Exception)
+        }
+
+        internal async Task OnCreateFailed(Request req, Response res)
+        {
+            string content = null;
+            if (res.ContentStream != null)
             {
-                _req?.Dispose();
-                _res?.Dispose();
-                throw;
+                using (var reader = new StreamReader(res.ContentStream))
+                {
+                    content = await reader.ReadToEndAsync().ConfigureAwait(false);
+                }
             }
+
+            var ex = new RestApiException<Models.ApiError>(
+                req,
+                res,
+                content,
+                Client.Deserialize<Models.ApiError>(content)
+                );
+            HandleFailedCreateRequest(ex);
+            HandleFailedRequest(ex);
+            Client.OnFailedRequest(ex);
+            throw ex;
         }
 
         partial void HandleFailedGetSubscriptionRequest(RestApiException ex);
 
-        public async Task<Subscription> GetSubscriptionAsync(
+        public async Task<Models.Subscription> GetSubscriptionAsync(
             Guid id,
             CancellationToken cancellationToken = default
         )
         {
-            using (var _res = await GetSubscriptionInternalAsync(
-                id,
-                cancellationToken
-            ).ConfigureAwait(false))
+
+            if (id == default(Guid))
             {
-                return _res.Body;
+                throw new ArgumentNullException(nameof(id));
+            }
+
+            const string apiVersion = "2019-01-16";
+
+            var _baseUri = Client.Options.BaseUri;
+            var _url = new RequestUriBuilder();
+            _url.Reset(_baseUri);
+            _url.AppendPath(
+                "/api/subscriptions/{id}".Replace("{id}", Uri.EscapeDataString(Client.Serialize(id))),
+                false);
+
+            _url.AppendQuery("api-version", Client.Serialize(apiVersion));
+
+
+            using (var _req = Client.Pipeline.CreateRequest())
+            {
+                _req.Uri = _url;
+                _req.Method = RequestMethod.Get;
+
+                using (var _res = await Client.SendAsync(_req, cancellationToken).ConfigureAwait(false))
+                {
+                    if (_res.Status < 200 || _res.Status >= 300)
+                    {
+                        await OnGetSubscriptionFailed(_req, _res).ConfigureAwait(false);
+                    }
+
+                    if (_res.ContentStream == null)
+                    {
+                        await OnGetSubscriptionFailed(_req, _res).ConfigureAwait(false);
+                    }
+
+                    using (var _reader = new StreamReader(_res.ContentStream))
+                    {
+                        var _content = await _reader.ReadToEndAsync().ConfigureAwait(false);
+                        var _body = Client.Deserialize<Models.Subscription>(_content);
+                        return _body;
+                    }
+                }
             }
         }
 
-        internal async Task OnGetSubscriptionFailed(HttpRequestMessage req, HttpResponseMessage res)
+        internal async Task OnGetSubscriptionFailed(Request req, Response res)
         {
-            var content = await res.Content.ReadAsStringAsync().ConfigureAwait(false);
-            var ex = new RestApiException<ApiError>(
-                new HttpRequestMessageWrapper(req, null),
-                new HttpResponseMessageWrapper(res, content),
-                Client.Deserialize<ApiError>(content)
+            string content = null;
+            if (res.ContentStream != null)
+            {
+                using (var reader = new StreamReader(res.ContentStream))
+                {
+                    content = await reader.ReadToEndAsync().ConfigureAwait(false);
+                }
+            }
+
+            var ex = new RestApiException<Models.ApiError>(
+                req,
+                res,
+                content,
+                Client.Deserialize<Models.ApiError>(content)
                 );
             HandleFailedGetSubscriptionRequest(ex);
             HandleFailedRequest(ex);
@@ -313,84 +333,74 @@ namespace Microsoft.DotNet.Maestro.Client
             throw ex;
         }
 
-        internal async Task<HttpOperationResponse<Subscription>> GetSubscriptionInternalAsync(
+        partial void HandleFailedDeleteSubscriptionRequest(RestApiException ex);
+
+        public async Task<Models.Subscription> DeleteSubscriptionAsync(
             Guid id,
             CancellationToken cancellationToken = default
         )
         {
-            if (id == default)
+
+            if (id == default(Guid))
             {
                 throw new ArgumentNullException(nameof(id));
             }
 
             const string apiVersion = "2019-01-16";
 
-            var _path = "/api/subscriptions/{id}";
-            _path = _path.Replace("{id}", Client.Serialize(id));
+            var _baseUri = Client.Options.BaseUri;
+            var _url = new RequestUriBuilder();
+            _url.Reset(_baseUri);
+            _url.AppendPath(
+                "/api/subscriptions/{id}".Replace("{id}", Uri.EscapeDataString(Client.Serialize(id))),
+                false);
 
-            var _query = new QueryBuilder();
-            _query.Add("api-version", Client.Serialize(apiVersion));
+            _url.AppendQuery("api-version", Client.Serialize(apiVersion));
 
-            var _uriBuilder = new UriBuilder(Client.BaseUri);
-            _uriBuilder.Path = _uriBuilder.Path.TrimEnd('/') + _path;
-            _uriBuilder.Query = _query.ToString();
-            var _url = _uriBuilder.Uri;
 
-            HttpRequestMessage _req = null;
-            HttpResponseMessage _res = null;
-            try
+            using (var _req = Client.Pipeline.CreateRequest())
             {
-                _req = new HttpRequestMessage(HttpMethod.Get, _url);
+                _req.Uri = _url;
+                _req.Method = RequestMethod.Delete;
 
-                if (Client.Credentials != null)
+                using (var _res = await Client.SendAsync(_req, cancellationToken).ConfigureAwait(false))
                 {
-                    await Client.Credentials.ProcessHttpRequestAsync(_req, cancellationToken).ConfigureAwait(false);
-                }
+                    if (_res.Status < 200 || _res.Status >= 300)
+                    {
+                        await OnDeleteSubscriptionFailed(_req, _res).ConfigureAwait(false);
+                    }
 
-                _res = await Client.SendAsync(_req, cancellationToken).ConfigureAwait(false);
-                if (!_res.IsSuccessStatusCode)
-                {
-                    await OnGetSubscriptionFailed(_req, _res);
+                    if (_res.ContentStream == null)
+                    {
+                        await OnDeleteSubscriptionFailed(_req, _res).ConfigureAwait(false);
+                    }
+
+                    using (var _reader = new StreamReader(_res.ContentStream))
+                    {
+                        var _content = await _reader.ReadToEndAsync().ConfigureAwait(false);
+                        var _body = Client.Deserialize<Models.Subscription>(_content);
+                        return _body;
+                    }
                 }
-                string _responseContent = await _res.Content.ReadAsStringAsync().ConfigureAwait(false);
-                return new HttpOperationResponse<Subscription>
-                {
-                    Request = _req,
-                    Response = _res,
-                    Body = Client.Deserialize<Subscription>(_responseContent),
-                };
-            }
-            catch (Exception)
-            {
-                _req?.Dispose();
-                _res?.Dispose();
-                throw;
             }
         }
 
-        partial void HandleFailedDeleteSubscriptionRequest(RestApiException ex);
-
-        public async Task<Subscription> DeleteSubscriptionAsync(
-            Guid id,
-            CancellationToken cancellationToken = default
-        )
+        internal async Task OnDeleteSubscriptionFailed(Request req, Response res)
         {
-            using (var _res = await DeleteSubscriptionInternalAsync(
-                id,
-                cancellationToken
-            ).ConfigureAwait(false))
+            string content = null;
+            if (res.ContentStream != null)
             {
-                return _res.Body;
+                using (var reader = new StreamReader(res.ContentStream))
+                {
+                    content = await reader.ReadToEndAsync().ConfigureAwait(false);
+                }
             }
-        }
 
-        internal async Task OnDeleteSubscriptionFailed(HttpRequestMessage req, HttpResponseMessage res)
-        {
-            var content = await res.Content.ReadAsStringAsync().ConfigureAwait(false);
-            var ex = new RestApiException<ApiError>(
-                new HttpRequestMessageWrapper(req, null),
-                new HttpResponseMessageWrapper(res, content),
-                Client.Deserialize<ApiError>(content)
+            var ex = new RestApiException<Models.ApiError>(
+                req,
+                res,
+                content,
+                Client.Deserialize<Models.ApiError>(content)
                 );
             HandleFailedDeleteSubscriptionRequest(ex);
             HandleFailedRequest(ex);
@@ -398,86 +408,81 @@ namespace Microsoft.DotNet.Maestro.Client
             throw ex;
         }
 
-        internal async Task<HttpOperationResponse<Subscription>> DeleteSubscriptionInternalAsync(
+        partial void HandleFailedUpdateSubscriptionRequest(RestApiException ex);
+
+        public async Task<Models.Subscription> UpdateSubscriptionAsync(
             Guid id,
+            Models.SubscriptionUpdate body = default,
             CancellationToken cancellationToken = default
         )
         {
-            if (id == default)
+
+            if (id == default(Guid))
             {
                 throw new ArgumentNullException(nameof(id));
             }
 
             const string apiVersion = "2019-01-16";
 
-            var _path = "/api/subscriptions/{id}";
-            _path = _path.Replace("{id}", Client.Serialize(id));
+            var _baseUri = Client.Options.BaseUri;
+            var _url = new RequestUriBuilder();
+            _url.Reset(_baseUri);
+            _url.AppendPath(
+                "/api/subscriptions/{id}".Replace("{id}", Uri.EscapeDataString(Client.Serialize(id))),
+                false);
 
-            var _query = new QueryBuilder();
-            _query.Add("api-version", Client.Serialize(apiVersion));
+            _url.AppendQuery("api-version", Client.Serialize(apiVersion));
 
-            var _uriBuilder = new UriBuilder(Client.BaseUri);
-            _uriBuilder.Path = _uriBuilder.Path.TrimEnd('/') + _path;
-            _uriBuilder.Query = _query.ToString();
-            var _url = _uriBuilder.Uri;
 
-            HttpRequestMessage _req = null;
-            HttpResponseMessage _res = null;
-            try
+            using (var _req = Client.Pipeline.CreateRequest())
             {
-                _req = new HttpRequestMessage(HttpMethod.Delete, _url);
+                _req.Uri = _url;
+                _req.Method = RequestMethod.Patch;
 
-                if (Client.Credentials != null)
+                if (body != default(Models.SubscriptionUpdate))
                 {
-                    await Client.Credentials.ProcessHttpRequestAsync(_req, cancellationToken).ConfigureAwait(false);
+                    _req.Content = RequestContent.Create(Encoding.UTF8.GetBytes(Client.Serialize(body)));
+                    _req.Headers.Add("Content-Type", "application/json; charset=utf-8");
                 }
 
-                _res = await Client.SendAsync(_req, cancellationToken).ConfigureAwait(false);
-                if (!_res.IsSuccessStatusCode)
+                using (var _res = await Client.SendAsync(_req, cancellationToken).ConfigureAwait(false))
                 {
-                    await OnDeleteSubscriptionFailed(_req, _res);
+                    if (_res.Status < 200 || _res.Status >= 300)
+                    {
+                        await OnUpdateSubscriptionFailed(_req, _res).ConfigureAwait(false);
+                    }
+
+                    if (_res.ContentStream == null)
+                    {
+                        await OnUpdateSubscriptionFailed(_req, _res).ConfigureAwait(false);
+                    }
+
+                    using (var _reader = new StreamReader(_res.ContentStream))
+                    {
+                        var _content = await _reader.ReadToEndAsync().ConfigureAwait(false);
+                        var _body = Client.Deserialize<Models.Subscription>(_content);
+                        return _body;
+                    }
                 }
-                string _responseContent = await _res.Content.ReadAsStringAsync().ConfigureAwait(false);
-                return new HttpOperationResponse<Subscription>
-                {
-                    Request = _req,
-                    Response = _res,
-                    Body = Client.Deserialize<Subscription>(_responseContent),
-                };
-            }
-            catch (Exception)
-            {
-                _req?.Dispose();
-                _res?.Dispose();
-                throw;
             }
         }
 
-        partial void HandleFailedUpdateSubscriptionRequest(RestApiException ex);
-
-        public async Task<Subscription> UpdateSubscriptionAsync(
-            Guid id,
-            SubscriptionUpdate body = default,
-            CancellationToken cancellationToken = default
-        )
+        internal async Task OnUpdateSubscriptionFailed(Request req, Response res)
         {
-            using (var _res = await UpdateSubscriptionInternalAsync(
-                id,
-                body,
-                cancellationToken
-            ).ConfigureAwait(false))
+            string content = null;
+            if (res.ContentStream != null)
             {
-                return _res.Body;
+                using (var reader = new StreamReader(res.ContentStream))
+                {
+                    content = await reader.ReadToEndAsync().ConfigureAwait(false);
+                }
             }
-        }
 
-        internal async Task OnUpdateSubscriptionFailed(HttpRequestMessage req, HttpResponseMessage res)
-        {
-            var content = await res.Content.ReadAsStringAsync().ConfigureAwait(false);
-            var ex = new RestApiException<ApiError>(
-                new HttpRequestMessageWrapper(req, content),
-                new HttpResponseMessageWrapper(res, content),
-                Client.Deserialize<ApiError>(content)
+            var ex = new RestApiException<Models.ApiError>(
+                req,
+                res,
+                content,
+                Client.Deserialize<Models.ApiError>(content)
                 );
             HandleFailedUpdateSubscriptionRequest(ex);
             HandleFailedRequest(ex);
@@ -485,158 +490,79 @@ namespace Microsoft.DotNet.Maestro.Client
             throw ex;
         }
 
-        internal async Task<HttpOperationResponse<Subscription>> UpdateSubscriptionInternalAsync(
+        partial void HandleFailedTriggerSubscriptionRequest(RestApiException ex);
+
+        public async Task<Models.Subscription> TriggerSubscriptionAsync(
             Guid id,
-            SubscriptionUpdate body = default,
             CancellationToken cancellationToken = default
         )
         {
-            if (id == default)
+
+            if (id == default(Guid))
             {
                 throw new ArgumentNullException(nameof(id));
             }
 
             const string apiVersion = "2019-01-16";
 
-            var _path = "/api/subscriptions/{id}";
-            _path = _path.Replace("{id}", Client.Serialize(id));
+            var _baseUri = Client.Options.BaseUri;
+            var _url = new RequestUriBuilder();
+            _url.Reset(_baseUri);
+            _url.AppendPath(
+                "/api/subscriptions/{id}/trigger".Replace("{id}", Uri.EscapeDataString(Client.Serialize(id))),
+                false);
 
-            var _query = new QueryBuilder();
-            _query.Add("api-version", Client.Serialize(apiVersion));
+            _url.AppendQuery("api-version", Client.Serialize(apiVersion));
 
-            var _uriBuilder = new UriBuilder(Client.BaseUri);
-            _uriBuilder.Path = _uriBuilder.Path.TrimEnd('/') + _path;
-            _uriBuilder.Query = _query.ToString();
-            var _url = _uriBuilder.Uri;
 
-            HttpRequestMessage _req = null;
-            HttpResponseMessage _res = null;
-            try
+            using (var _req = Client.Pipeline.CreateRequest())
             {
-                _req = new HttpRequestMessage(new HttpMethod("PATCH"), _url);
+                _req.Uri = _url;
+                _req.Method = RequestMethod.Post;
 
-                string _requestContent = null;
-                if (body != default)
+                using (var _res = await Client.SendAsync(_req, cancellationToken).ConfigureAwait(false))
                 {
-                    _requestContent = Client.Serialize(body);
-                    _req.Content = new StringContent(_requestContent, Encoding.UTF8)
+                    if (_res.Status < 200 || _res.Status >= 300)
                     {
-                        Headers =
-                        {
-                            ContentType = MediaTypeHeaderValue.Parse("application/json; charset=utf-8"),
-                        },
-                    };
-                }
+                        await OnTriggerSubscriptionFailed(_req, _res).ConfigureAwait(false);
+                    }
 
-                if (Client.Credentials != null)
-                {
-                    await Client.Credentials.ProcessHttpRequestAsync(_req, cancellationToken).ConfigureAwait(false);
-                }
+                    if (_res.ContentStream == null)
+                    {
+                        await OnTriggerSubscriptionFailed(_req, _res).ConfigureAwait(false);
+                    }
 
-                _res = await Client.SendAsync(_req, cancellationToken).ConfigureAwait(false);
-                if (!_res.IsSuccessStatusCode)
-                {
-                    await OnUpdateSubscriptionFailed(_req, _res);
+                    using (var _reader = new StreamReader(_res.ContentStream))
+                    {
+                        var _content = await _reader.ReadToEndAsync().ConfigureAwait(false);
+                        var _body = Client.Deserialize<Models.Subscription>(_content);
+                        return _body;
+                    }
                 }
-                string _responseContent = await _res.Content.ReadAsStringAsync().ConfigureAwait(false);
-                return new HttpOperationResponse<Subscription>
-                {
-                    Request = _req,
-                    Response = _res,
-                    Body = Client.Deserialize<Subscription>(_responseContent),
-                };
-            }
-            catch (Exception)
-            {
-                _req?.Dispose();
-                _res?.Dispose();
-                throw;
             }
         }
 
-        partial void HandleFailedTriggerSubscriptionRequest(RestApiException ex);
-
-        public async Task<Subscription> TriggerSubscriptionAsync(
-            Guid id,
-            CancellationToken cancellationToken = default
-        )
+        internal async Task OnTriggerSubscriptionFailed(Request req, Response res)
         {
-            using (var _res = await TriggerSubscriptionInternalAsync(
-                id,
-                cancellationToken
-            ).ConfigureAwait(false))
+            string content = null;
+            if (res.ContentStream != null)
             {
-                return _res.Body;
+                using (var reader = new StreamReader(res.ContentStream))
+                {
+                    content = await reader.ReadToEndAsync().ConfigureAwait(false);
+                }
             }
-        }
 
-        internal async Task OnTriggerSubscriptionFailed(HttpRequestMessage req, HttpResponseMessage res)
-        {
-            var content = await res.Content.ReadAsStringAsync().ConfigureAwait(false);
-            var ex = new RestApiException<ApiError>(
-                new HttpRequestMessageWrapper(req, null),
-                new HttpResponseMessageWrapper(res, content),
-                Client.Deserialize<ApiError>(content)
+            var ex = new RestApiException<Models.ApiError>(
+                req,
+                res,
+                content,
+                Client.Deserialize<Models.ApiError>(content)
                 );
             HandleFailedTriggerSubscriptionRequest(ex);
             HandleFailedRequest(ex);
             Client.OnFailedRequest(ex);
             throw ex;
-        }
-
-        internal async Task<HttpOperationResponse<Subscription>> TriggerSubscriptionInternalAsync(
-            Guid id,
-            CancellationToken cancellationToken = default
-        )
-        {
-            if (id == default)
-            {
-                throw new ArgumentNullException(nameof(id));
-            }
-
-            const string apiVersion = "2019-01-16";
-
-            var _path = "/api/subscriptions/{id}/trigger";
-            _path = _path.Replace("{id}", Client.Serialize(id));
-
-            var _query = new QueryBuilder();
-            _query.Add("api-version", Client.Serialize(apiVersion));
-
-            var _uriBuilder = new UriBuilder(Client.BaseUri);
-            _uriBuilder.Path = _uriBuilder.Path.TrimEnd('/') + _path;
-            _uriBuilder.Query = _query.ToString();
-            var _url = _uriBuilder.Uri;
-
-            HttpRequestMessage _req = null;
-            HttpResponseMessage _res = null;
-            try
-            {
-                _req = new HttpRequestMessage(HttpMethod.Post, _url);
-
-                if (Client.Credentials != null)
-                {
-                    await Client.Credentials.ProcessHttpRequestAsync(_req, cancellationToken).ConfigureAwait(false);
-                }
-
-                _res = await Client.SendAsync(_req, cancellationToken).ConfigureAwait(false);
-                if (!_res.IsSuccessStatusCode)
-                {
-                    await OnTriggerSubscriptionFailed(_req, _res);
-                }
-                string _responseContent = await _res.Content.ReadAsStringAsync().ConfigureAwait(false);
-                return new HttpOperationResponse<Subscription>
-                {
-                    Request = _req,
-                    Response = _res,
-                    Body = Client.Deserialize<Subscription>(_responseContent),
-                };
-            }
-            catch (Exception)
-            {
-                _req?.Dispose();
-                _res?.Dispose();
-                throw;
-            }
         }
 
         partial void HandleFailedTriggerDailyUpdateRequest(RestApiException ex);
@@ -645,21 +571,53 @@ namespace Microsoft.DotNet.Maestro.Client
             CancellationToken cancellationToken = default
         )
         {
-            using (await TriggerDailyUpdateInternalAsync(
-                cancellationToken
-            ).ConfigureAwait(false))
+
+            const string apiVersion = "2019-01-16";
+
+            var _baseUri = Client.Options.BaseUri;
+            var _url = new RequestUriBuilder();
+            _url.Reset(_baseUri);
+            _url.AppendPath(
+                "/api/subscriptions/triggerDaily",
+                false);
+
+            _url.AppendQuery("api-version", Client.Serialize(apiVersion));
+
+
+            using (var _req = Client.Pipeline.CreateRequest())
             {
-                return;
+                _req.Uri = _url;
+                _req.Method = RequestMethod.Post;
+
+                using (var _res = await Client.SendAsync(_req, cancellationToken).ConfigureAwait(false))
+                {
+                    if (_res.Status < 200 || _res.Status >= 300)
+                    {
+                        await OnTriggerDailyUpdateFailed(_req, _res).ConfigureAwait(false);
+                    }
+
+
+                    return;
+                }
             }
         }
 
-        internal async Task OnTriggerDailyUpdateFailed(HttpRequestMessage req, HttpResponseMessage res)
+        internal async Task OnTriggerDailyUpdateFailed(Request req, Response res)
         {
-            var content = await res.Content.ReadAsStringAsync().ConfigureAwait(false);
-            var ex = new RestApiException<ApiError>(
-                new HttpRequestMessageWrapper(req, null),
-                new HttpResponseMessageWrapper(res, content),
-                Client.Deserialize<ApiError>(content)
+            string content = null;
+            if (res.ContentStream != null)
+            {
+                using (var reader = new StreamReader(res.ContentStream))
+                {
+                    content = await reader.ReadToEndAsync().ConfigureAwait(false);
+                }
+            }
+
+            var ex = new RestApiException<Models.ApiError>(
+                req,
+                res,
+                content,
+                Client.Deserialize<Models.ApiError>(content)
                 );
             HandleFailedTriggerDailyUpdateRequest(ex);
             HandleFailedRequest(ex);
@@ -667,150 +625,132 @@ namespace Microsoft.DotNet.Maestro.Client
             throw ex;
         }
 
-        internal async Task<HttpOperationResponse> TriggerDailyUpdateInternalAsync(
-            CancellationToken cancellationToken = default
-        )
-        {
-            const string apiVersion = "2019-01-16";
-
-            var _path = "/api/subscriptions/triggerDaily";
-
-            var _query = new QueryBuilder();
-            _query.Add("api-version", Client.Serialize(apiVersion));
-
-            var _uriBuilder = new UriBuilder(Client.BaseUri);
-            _uriBuilder.Path = _uriBuilder.Path.TrimEnd('/') + _path;
-            _uriBuilder.Query = _query.ToString();
-            var _url = _uriBuilder.Uri;
-
-            HttpRequestMessage _req = null;
-            HttpResponseMessage _res = null;
-            try
-            {
-                _req = new HttpRequestMessage(HttpMethod.Post, _url);
-
-                if (Client.Credentials != null)
-                {
-                    await Client.Credentials.ProcessHttpRequestAsync(_req, cancellationToken).ConfigureAwait(false);
-                }
-
-                _res = await Client.SendAsync(_req, cancellationToken).ConfigureAwait(false);
-                if (!_res.IsSuccessStatusCode)
-                {
-                    await OnTriggerDailyUpdateFailed(_req, _res);
-                }
-                string _responseContent = await _res.Content.ReadAsStringAsync().ConfigureAwait(false);
-                return new HttpOperationResponse
-                {
-                    Request = _req,
-                    Response = _res,
-                };
-            }
-            catch (Exception)
-            {
-                _req?.Dispose();
-                _res?.Dispose();
-                throw;
-            }
-        }
-
         partial void HandleFailedGetSubscriptionHistoryRequest(RestApiException ex);
 
-        public async Task<PagedResponse<SubscriptionHistoryItem>> GetSubscriptionHistoryAsync(
+        public AsyncPageable<Models.SubscriptionHistoryItem> GetSubscriptionHistoryAsync(
             Guid id,
-            int? page = default,
-            int? perPage = default,
             CancellationToken cancellationToken = default
         )
         {
-            using (var _res = await GetSubscriptionHistoryInternalAsync(
-                id,
-                page,
-                perPage,
-                cancellationToken
-            ).ConfigureAwait(false))
+            async IAsyncEnumerable<Page<Models.SubscriptionHistoryItem>> GetPages(string _continueToken, int? _pageSizeHint)
             {
-                return new PagedResponse<SubscriptionHistoryItem>(Client, OnGetSubscriptionHistoryFailed, _res);
+                int? page = 1;
+                int? perPage = _pageSizeHint;
+
+                if (!string.IsNullOrEmpty(_continueToken))
+                {
+                    page = int.Parse(_continueToken);
+                }
+
+                while (true)
+                {
+                    Page<Models.SubscriptionHistoryItem> _page = null;
+
+                    try {
+                        _page = await GetSubscriptionHistoryPageAsync(
+                            id,
+                            page,
+                            perPage,
+                            cancellationToken
+                        ).ConfigureAwait(false);
+                        if (_page.Values.Count < 1)
+                        {
+                            yield break;
+                        }                   
+                    }
+                    catch (RestApiException e) when (e.Response.Status == 404)
+                    {
+                        yield break;
+                    }
+
+                    yield return _page;
+                    page++;
+                }
             }
+            return AsyncPageable.Create(GetPages);
         }
 
-        internal async Task OnGetSubscriptionHistoryFailed(HttpRequestMessage req, HttpResponseMessage res)
-        {
-            var content = await res.Content.ReadAsStringAsync().ConfigureAwait(false);
-            var ex = new RestApiException<ApiError>(
-                new HttpRequestMessageWrapper(req, null),
-                new HttpResponseMessageWrapper(res, content),
-                Client.Deserialize<ApiError>(content)
-                );
-            HandleFailedGetSubscriptionHistoryRequest(ex);
-            HandleFailedRequest(ex);
-            Client.OnFailedRequest(ex);
-            throw ex;
-        }
-
-        internal async Task<HttpOperationResponse<IImmutableList<SubscriptionHistoryItem>>> GetSubscriptionHistoryInternalAsync(
+        public async Task<Page<Models.SubscriptionHistoryItem>> GetSubscriptionHistoryPageAsync(
             Guid id,
             int? page = default,
             int? perPage = default,
             CancellationToken cancellationToken = default
         )
         {
-            if (id == default)
+
+            if (id == default(Guid))
             {
                 throw new ArgumentNullException(nameof(id));
             }
 
             const string apiVersion = "2019-01-16";
 
-            var _path = "/api/subscriptions/{id}/history";
-            _path = _path.Replace("{id}", Client.Serialize(id));
+            var _baseUri = Client.Options.BaseUri;
+            var _url = new RequestUriBuilder();
+            _url.Reset(_baseUri);
+            _url.AppendPath(
+                "/api/subscriptions/{id}/history".Replace("{id}", Uri.EscapeDataString(Client.Serialize(id))),
+                false);
 
-            var _query = new QueryBuilder();
-            if (page != default)
+            if (page != default(int?))
             {
-                _query.Add("page", Client.Serialize(page));
+                _url.AppendQuery("page", Client.Serialize(page));
             }
-            if (perPage != default)
+            if (perPage != default(int?))
             {
-                _query.Add("perPage", Client.Serialize(perPage));
+                _url.AppendQuery("perPage", Client.Serialize(perPage));
             }
-            _query.Add("api-version", Client.Serialize(apiVersion));
+            _url.AppendQuery("api-version", Client.Serialize(apiVersion));
 
-            var _uriBuilder = new UriBuilder(Client.BaseUri);
-            _uriBuilder.Path = _uriBuilder.Path.TrimEnd('/') + _path;
-            _uriBuilder.Query = _query.ToString();
-            var _url = _uriBuilder.Uri;
 
-            HttpRequestMessage _req = null;
-            HttpResponseMessage _res = null;
-            try
+            using (var _req = Client.Pipeline.CreateRequest())
             {
-                _req = new HttpRequestMessage(HttpMethod.Get, _url);
+                _req.Uri = _url;
+                _req.Method = RequestMethod.Get;
 
-                if (Client.Credentials != null)
+                using (var _res = await Client.SendAsync(_req, cancellationToken).ConfigureAwait(false))
                 {
-                    await Client.Credentials.ProcessHttpRequestAsync(_req, cancellationToken).ConfigureAwait(false);
+                    if (_res.Status < 200 || _res.Status >= 300)
+                    {
+                        await OnGetSubscriptionHistoryFailed(_req, _res).ConfigureAwait(false);
+                    }
+
+                    if (_res.ContentStream == null)
+                    {
+                        await OnGetSubscriptionHistoryFailed(_req, _res).ConfigureAwait(false);
+                    }
+
+                    using (var _reader = new StreamReader(_res.ContentStream))
+                    {
+                        var _content = await _reader.ReadToEndAsync().ConfigureAwait(false);
+                        var _body = Client.Deserialize<IImmutableList<Models.SubscriptionHistoryItem>>(_content);
+                        return Page<Models.SubscriptionHistoryItem>.FromValues(_body, (page + 1).ToString(), _res);
+                    }
                 }
+            }
+        }
 
-                _res = await Client.SendAsync(_req, cancellationToken).ConfigureAwait(false);
-                if (!_res.IsSuccessStatusCode)
-                {
-                    await OnGetSubscriptionHistoryFailed(_req, _res);
-                }
-                string _responseContent = await _res.Content.ReadAsStringAsync().ConfigureAwait(false);
-                return new HttpOperationResponse<IImmutableList<SubscriptionHistoryItem>>
-                {
-                    Request = _req,
-                    Response = _res,
-                    Body = Client.Deserialize<IImmutableList<SubscriptionHistoryItem>>(_responseContent),
-                };
-            }
-            catch (Exception)
+        internal async Task OnGetSubscriptionHistoryFailed(Request req, Response res)
+        {
+            string content = null;
+            if (res.ContentStream != null)
             {
-                _req?.Dispose();
-                _res?.Dispose();
-                throw;
+                using (var reader = new StreamReader(res.ContentStream))
+                {
+                    content = await reader.ReadToEndAsync().ConfigureAwait(false);
+                }
             }
+
+            var ex = new RestApiException<Models.ApiError>(
+                req,
+                res,
+                content,
+                Client.Deserialize<Models.ApiError>(content)
+                );
+            HandleFailedGetSubscriptionHistoryRequest(ex);
+            HandleFailedRequest(ex);
+            Client.OnFailedRequest(ex);
+            throw ex;
         }
 
         partial void HandleFailedRetrySubscriptionActionAsyncRequest(RestApiException ex);
@@ -821,89 +761,68 @@ namespace Microsoft.DotNet.Maestro.Client
             CancellationToken cancellationToken = default
         )
         {
-            using (await RetrySubscriptionActionAsyncInternalAsync(
-                id,
-                timestamp,
-                cancellationToken
-            ).ConfigureAwait(false))
-            {
-                return;
-            }
-        }
 
-        internal async Task OnRetrySubscriptionActionAsyncFailed(HttpRequestMessage req, HttpResponseMessage res)
-        {
-            var content = await res.Content.ReadAsStringAsync().ConfigureAwait(false);
-            var ex = new RestApiException<ApiError>(
-                new HttpRequestMessageWrapper(req, null),
-                new HttpResponseMessageWrapper(res, content),
-                Client.Deserialize<ApiError>(content)
-                );
-            HandleFailedRetrySubscriptionActionAsyncRequest(ex);
-            HandleFailedRequest(ex);
-            Client.OnFailedRequest(ex);
-            throw ex;
-        }
-
-        internal async Task<HttpOperationResponse> RetrySubscriptionActionAsyncInternalAsync(
-            Guid id,
-            long timestamp,
-            CancellationToken cancellationToken = default
-        )
-        {
-            if (id == default)
+            if (id == default(Guid))
             {
                 throw new ArgumentNullException(nameof(id));
             }
 
-            if (timestamp == default)
+            if (timestamp == default(long))
             {
                 throw new ArgumentNullException(nameof(timestamp));
             }
 
             const string apiVersion = "2019-01-16";
 
-            var _path = "/api/subscriptions/{id}/retry/{timestamp}";
-            _path = _path.Replace("{id}", Client.Serialize(id));
-            _path = _path.Replace("{timestamp}", Client.Serialize(timestamp));
+            var _baseUri = Client.Options.BaseUri;
+            var _url = new RequestUriBuilder();
+            _url.Reset(_baseUri);
+            _url.AppendPath(
+                "/api/subscriptions/{id}/retry/{timestamp}".Replace("{id}", Uri.EscapeDataString(Client.Serialize(id))).Replace("{timestamp}", Uri.EscapeDataString(Client.Serialize(timestamp))),
+                false);
 
-            var _query = new QueryBuilder();
-            _query.Add("api-version", Client.Serialize(apiVersion));
+            _url.AppendQuery("api-version", Client.Serialize(apiVersion));
 
-            var _uriBuilder = new UriBuilder(Client.BaseUri);
-            _uriBuilder.Path = _uriBuilder.Path.TrimEnd('/') + _path;
-            _uriBuilder.Query = _query.ToString();
-            var _url = _uriBuilder.Uri;
 
-            HttpRequestMessage _req = null;
-            HttpResponseMessage _res = null;
-            try
+            using (var _req = Client.Pipeline.CreateRequest())
             {
-                _req = new HttpRequestMessage(HttpMethod.Post, _url);
+                _req.Uri = _url;
+                _req.Method = RequestMethod.Post;
 
-                if (Client.Credentials != null)
+                using (var _res = await Client.SendAsync(_req, cancellationToken).ConfigureAwait(false))
                 {
-                    await Client.Credentials.ProcessHttpRequestAsync(_req, cancellationToken).ConfigureAwait(false);
-                }
+                    if (_res.Status < 200 || _res.Status >= 300)
+                    {
+                        await OnRetrySubscriptionActionAsyncFailed(_req, _res).ConfigureAwait(false);
+                    }
 
-                _res = await Client.SendAsync(_req, cancellationToken).ConfigureAwait(false);
-                if (!_res.IsSuccessStatusCode)
-                {
-                    await OnRetrySubscriptionActionAsyncFailed(_req, _res);
+
+                    return;
                 }
-                string _responseContent = await _res.Content.ReadAsStringAsync().ConfigureAwait(false);
-                return new HttpOperationResponse
-                {
-                    Request = _req,
-                    Response = _res,
-                };
             }
-            catch (Exception)
+        }
+
+        internal async Task OnRetrySubscriptionActionAsyncFailed(Request req, Response res)
+        {
+            string content = null;
+            if (res.ContentStream != null)
             {
-                _req?.Dispose();
-                _res?.Dispose();
-                throw;
+                using (var reader = new StreamReader(res.ContentStream))
+                {
+                    content = await reader.ReadToEndAsync().ConfigureAwait(false);
+                }
             }
+
+            var ex = new RestApiException<Models.ApiError>(
+                req,
+                res,
+                content,
+                Client.Deserialize<Models.ApiError>(content)
+                );
+            HandleFailedRetrySubscriptionActionAsyncRequest(ex);
+            HandleFailedRequest(ex);
+            Client.OnFailedRequest(ex);
+            throw ex;
         }
     }
 }

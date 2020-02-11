@@ -23,7 +23,6 @@ namespace Maestro.Web.Api.v2019_01_16.Models
             Commit = other.Commit;
             GitHubRepository = other.GitHubRepository;
             GitHubBranch = other.GitHubBranch;
-            PublishUsingPipelines = other.PublishUsingPipelines;
             AzureDevOpsBuildId = other.AzureDevOpsBuildId;
             AzureDevOpsBuildDefinitionId = other.AzureDevOpsBuildDefinitionId;
             AzureDevOpsAccount = other.AzureDevOpsAccount;
@@ -37,7 +36,9 @@ namespace Maestro.Web.Api.v2019_01_16.Models
                 .Select(c => new v2018_07_16.Models.Channel(c))
                 .ToList();
             Assets = other.Assets?.Select(a => new v2018_07_16.Models.Asset(a)).ToList();
-            Dependencies = other.DependentBuildIds?.Select(d => new BuildRef(d.DependentBuildId, d.IsProduct)).ToList();
+            Dependencies = other.DependentBuildIds?.Select(d => new BuildRef(d.DependentBuildId, d.IsProduct, d.TimeToInclusionInMinutes)).ToList();
+            Staleness = other.Staleness;
+            Released = other.Released;
         }
 
         public int Id { get; }
@@ -62,7 +63,15 @@ namespace Maestro.Web.Api.v2019_01_16.Models
 
         public string GitHubBranch { get; set; }
 
-        public bool PublishUsingPipelines { get; set; }
+        public bool PublishUsingPipelines
+        {
+            get
+            {
+                return true;
+            }
+
+            set { }
+        }
 
         public DateTimeOffset DateProduced { get; }
 
@@ -71,5 +80,9 @@ namespace Maestro.Web.Api.v2019_01_16.Models
         public List<v2018_07_16.Models.Asset> Assets { get; }
 
         public List<BuildRef> Dependencies { get; }
+
+        public int Staleness { get; }
+
+        public bool Released { get; }
     }
 }

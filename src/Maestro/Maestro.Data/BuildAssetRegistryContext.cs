@@ -15,10 +15,10 @@ using Microsoft.AspNetCore.Hosting.Internal;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.DotNet.EntityFrameworkCore.Extensions;
+using Microsoft.Dotnet.GitHub.Authentication;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
-using Microsoft.EntityFrameworkCore.Query;
-using Newtonsoft.Json.Linq;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace Maestro.Data
 {
@@ -48,7 +48,7 @@ namespace Maestro.Data
         }
     }
 
-    public class BuildAssetRegistryContext : IdentityDbContext<ApplicationUser, IdentityRole<int>, int>
+    public class BuildAssetRegistryContext : IdentityDbContext<ApplicationUser, IdentityRole<int>, int>, IInstallationLookup
     {
         public BuildAssetRegistryContext(IHostingEnvironment hostingEnvironment, DbContextOptions options) : base(
             options)
@@ -74,7 +74,8 @@ namespace Maestro.Data
         public DbSet<RepositoryBranchUpdate> RepositoryBranchUpdates { get; set; }
         public DbQuery<RepositoryBranchUpdateHistoryEntry> RepositoryBranchUpdateHistory { get; set; }
         public DbQuery<SubscriptionUpdateHistoryEntry> SubscriptionUpdateHistory { get; set; }
-
+        public DbSet<DependencyFlowEvent> DependencyFlowEvents { get; set; }
+        public DbSet<GoalTime> GoalTime { get; set; }
 
         public override Task<int> SaveChangesAsync(
             bool acceptAllChangesOnSuccess,
@@ -135,19 +136,19 @@ namespace Maestro.Data
 
             builder.Entity<ChannelReleasePipeline>()
                 .HasKey(crp => new {crp.ChannelId, crp.ReleasePipelineId});
-            
+
             builder.Entity<ChannelReleasePipeline>()
                 .HasOne(crp => crp.Channel)
                 .WithMany(c => c.ChannelReleasePipelines)
                 .HasForeignKey(rcp => rcp.ChannelId)
                 .OnDelete(DeleteBehavior.Restrict);
-            
+
             builder.Entity<ChannelReleasePipeline>()
                 .HasOne(crp => crp.ReleasePipeline)
                 .WithMany(rp => rp.ChannelReleasePipelines)
                 .HasForeignKey(crp => crp.ReleasePipelineId)
                 .OnDelete(DeleteBehavior.Restrict);
-            
+
             builder.Entity<ApplicationUserPersonalAccessToken>()
                 .HasIndex(
                     t => new
@@ -180,12 +181,12 @@ namespace Maestro.Data
             builder.Entity<Repository>().HasKey(r => new {r.RepositoryName});
 
             builder.Entity<RepositoryBranch>()
-            .HasKey(
-                rb => new
-                {
-                    rb.RepositoryName,
-                    rb.BranchName
-                });
+                .HasKey(
+                    rb => new
+                    {
+                        rb.RepositoryName,
+                        rb.BranchName
+                    });
 
             builder.Entity<RepositoryBranch>()
                 .HasOne(rb => rb.Repository)
@@ -193,12 +194,12 @@ namespace Maestro.Data
                 .HasForeignKey(rb => new {rb.RepositoryName});
 
             builder.Entity<RepositoryBranchUpdate>()
-            .HasKey(
-                ru => new
-                {
-                    ru.RepositoryName,
-                    ru.BranchName
-                });
+                .HasKey(
+                    ru => new
+                    {
+                        ru.RepositoryName,
+                        ru.BranchName
+                    });
 
             builder.Entity<RepositoryBranchUpdate>()
                 .HasOne(ru => ru.RepositoryBranch)
@@ -210,6 +211,19 @@ namespace Maestro.Data
                         ru.BranchName
                     })
                 .OnDelete(DeleteBehavior.Restrict);
+
+            builder.Entity<GoalTime>()
+                .HasKey(
+                    gt => new
+                    {
+                        gt.DefinitionId,
+                        gt.ChannelId
+                    });
+
+            builder.Entity<GoalTime>()
+                .HasOne(gt => gt.Channel)
+                .WithMany()
+                .HasForeignKey(gt => gt.ChannelId);
 
             builder.ForSqlServerIsSystemVersioned<RepositoryBranchUpdate, RepositoryBranchUpdateHistory>("6 MONTH");
 
@@ -279,6 +293,7 @@ FOR SYSTEM_TIME ALL
             var buildIdColumnName = dependencyEntity.FindProperty(nameof(BuildDependency.BuildId)).Relational().ColumnName;
             var dependencyIdColumnName = dependencyEntity.FindProperty(nameof(BuildDependency.DependentBuildId)).Relational().ColumnName;
             var isProductColumnName = dependencyEntity.FindProperty(nameof(BuildDependency.IsProduct)).Relational().ColumnName;
+            var timeToInclusionInMinutesColumnName = dependencyEntity.FindProperty(nameof(BuildDependency.TimeToInclusionInMinutes)).Relational().ColumnName;
             var edgeTable = dependencyEntity.Relational().TableName;
 
             var edges = BuildDependencies.FromSql($@"
@@ -287,6 +302,7 @@ WITH traverse AS (
             {buildIdColumnName},
             {dependencyIdColumnName},
             {isProductColumnName},
+            {timeToInclusionInMinutesColumnName},
             0 as Depth
         from {edgeTable}
         WHERE {buildIdColumnName} = @id
@@ -295,6 +311,7 @@ WITH traverse AS (
             {edgeTable}.{buildIdColumnName},
             {edgeTable}.{dependencyIdColumnName},
             {edgeTable}.{isProductColumnName},
+            {edgeTable}.{timeToInclusionInMinutesColumnName},
             traverse.Depth + 1
         FROM {edgeTable}
         INNER JOIN traverse
@@ -302,7 +319,7 @@ WITH traverse AS (
         WHERE traverse.{isProductColumnName} = 1 -- The thing we previously traversed was a product dependency
             AND traverse.Depth < 10 -- Don't load all the way back because of incorrect isProduct columns
 )
-SELECT DISTINCT {buildIdColumnName}, {dependencyIdColumnName}, {isProductColumnName}
+SELECT DISTINCT {buildIdColumnName}, {dependencyIdColumnName}, {isProductColumnName}, {timeToInclusionInMinutesColumnName}
 FROM traverse;",
                new SqlParameter("id", buildId));
 
@@ -327,28 +344,30 @@ FROM traverse;",
                 dict[edge.BuildId].DependentBuildIds.Add(edge);
             }
 
+            // Gather subscriptions used by this build.
+            Build primaryBuild = Builds.First(b => b.Id == buildId);
+            var validSubscriptions = await Subscriptions.Where(s => (s.TargetRepository == primaryBuild.AzureDevOpsRepository || s.TargetRepository == primaryBuild.GitHubRepository) &&
+                                                                    (s.TargetBranch == primaryBuild.AzureDevOpsBranch || s.TargetBranch == primaryBuild.GitHubBranch ||
+                                                                     $"refs/heads/{s.TargetBranch}" == primaryBuild.AzureDevOpsBranch || $"refs/heads/{s.TargetBranch}" == primaryBuild.GitHubBranch)).ToListAsync();
+
+            // Use the subscriptions to determine what channels are relevant for this build, so just grab the unique channel ID's from valid suscriptions
+            var channelIds = validSubscriptions.GroupBy(x => x.ChannelId).Select(y => y.First()).Select(s => s.ChannelId);
+
+            // Acquire list of builds in valid channels
+            var channelBuildIds = await BuildChannels.Where(b => channelIds.Any(c => c == b.ChannelId)).Select(s => s.BuildId).ToListAsync();
+            var possibleBuilds = await Builds.Where(b => channelBuildIds.Any(c => c == b.Id)).ToListAsync();
+
+            // Calculate total number of builds that are newer.
+            foreach (var id in dict.Keys)
+            {
+                var build = dict[id];
+                // Get newer builds data for this channel.
+                var newer = possibleBuilds.Where(b => b.GitHubRepository == build.GitHubRepository &&
+                                                    b.AzureDevOpsRepository == build.AzureDevOpsRepository &&
+                                                    b.DateProduced > build.DateProduced);
+                dict[id].Staleness = newer.Count();
+            }
             return dict.Values.ToList();
-        }
-    }
-
-    public static class JsonExtensions
-    {
-        public static string JsonValue(string column, [NotParameterized] string path)
-        {
-            // The Entity Framework in memory provider will call this so it needs to be implemented
-            var lax = true;
-            if (path.StartsWith("lax "))
-            {
-                path = path.Substring("lax ".Length);
-            }
-            else if (path.StartsWith("strict "))
-            {
-                lax = false;
-                path = path.Substring("strict ".Length);
-            }
-
-            JToken token = JObject.Parse(column).SelectToken(path, !lax);
-            return token.ToObject<string>();
         }
     }
 

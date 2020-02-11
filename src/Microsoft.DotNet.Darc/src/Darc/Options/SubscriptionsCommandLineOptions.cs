@@ -8,6 +8,8 @@ using System;
 using Microsoft.DotNet.Maestro.Client.Models;
 using System.Collections.Generic;
 using System.Linq;
+using Microsoft.DotNet.DarcLib;
+using System.Threading.Tasks;
 
 namespace Microsoft.DotNet.Darc.Options
 {
@@ -24,6 +26,13 @@ namespace Microsoft.DotNet.Darc.Options
 
         [Option("target-branch", HelpText = "Filter by target branch (matches substring unless --exact or --regex is passed).")]
         public string TargetBranch { get; set; }
+
+        [Option("frequencies", Separator = ',',
+            HelpText = @"Filter by subscription update frequency. Typical values: ""everyWeek"", ""twiceDaily"", ""everyDay"", ""everyBuild"", ""none""")]
+        public IEnumerable<string> Frequencies { get; set; }
+
+        [Option("default-channel", HelpText = "Filter to subscriptions that target repo+branches that apply by default to the specified channel.")]
+        public string DefaultChannelTarget { get; set; }
 
         [Option("exact", SetName = "exact", HelpText = "Match subscription parameters exactly (cannot be used with --regex).")]
         public bool ExactMatch { get; set; }
@@ -46,23 +55,16 @@ namespace Microsoft.DotNet.Darc.Options
         [Option("ids", Separator = ',', HelpText = "Get only subscriptions with these ids.")]
         public IEnumerable<string> SubscriptionIds { get; set; }
 
-        [Option("id", HelpText = "Get only subscription with this ids")]
-        public string SubscriptionId { get; set; }
-
-        public bool HasAtLeastOneFilter()
+        public async Task<IEnumerable<Subscription>> FilterSubscriptions(IRemote remote)
         {
-            return !string.IsNullOrEmpty(TargetRepository) ||
-                   !string.IsNullOrEmpty(SourceRepository) ||
-                   !string.IsNullOrEmpty(Channel) ||
-                   !string.IsNullOrEmpty(TargetBranch) ||
-                   Disabled ||
-                   Enabled ||
-                   Batchable ||
-                   NotBatchable ||
-                   SubscriptionIds.Any();
+            IEnumerable<DefaultChannel> defaultChannels = await remote.GetDefaultChannelsAsync();
+            return (await remote.GetSubscriptionsAsync()).Where(subscription =>
+            {
+                return SubcriptionFilter(subscription, defaultChannels);
+            });
         }
 
-        public bool SubcriptionFilter(Subscription subscription)
+        public bool SubcriptionFilter(Subscription subscription, IEnumerable<DefaultChannel> defaultChannels)
         {
             return (SubscriptionParameterMatches(TargetRepository, subscription.TargetRepository) &&
                     SubscriptionParameterMatches(TargetBranch, subscription.TargetBranch) &&
@@ -70,7 +72,9 @@ namespace Microsoft.DotNet.Darc.Options
                     SubscriptionParameterMatches(Channel, subscription.Channel.Name) &&
                     SubscriptionEnabledParameterMatches(subscription) &&
                     SubscriptionBatchableParameterMatches(subscription) &&
-                    SubscriptionIdsParameterMatches(subscription));
+                    SubscriptionIdsParameterMatches(subscription) &&
+                    SubscriptionFrequenciesParameterMatches(subscription) &&
+                    SubscriptionDefaultChannelTargetParameterMatches(subscription, defaultChannels));
         }
 
         public bool SubscriptionEnabledParameterMatches(Subscription subscription)
@@ -89,16 +93,19 @@ namespace Microsoft.DotNet.Darc.Options
 
         public bool SubscriptionIdsParameterMatches(Subscription subscription)
         {
-            // Since there is both --id and --ids, preference --id since it is more restrictive.
-            // Yes, it makes no sense to use both, but there's nothing technically wrong with it.
-            if (!string.IsNullOrEmpty(SubscriptionId))
-            {
-                return SubscriptionId.Equals(subscription.Id.ToString(), StringComparison.OrdinalIgnoreCase);
-            }
-            else
-            {
-                return !SubscriptionIds.Any() || SubscriptionIds.Any(id => id.Equals(subscription.Id.ToString(), StringComparison.OrdinalIgnoreCase));
-            }
+            return !SubscriptionIds.Any() || SubscriptionIds.Any(id => id.Equals(subscription.Id.ToString(), StringComparison.OrdinalIgnoreCase));
+        }
+
+        public bool SubscriptionFrequenciesParameterMatches(Subscription subscription)
+        {
+            return !Frequencies.Any() || Frequencies.Any(frequency => subscription.Policy.UpdateFrequency.ToString().Contains(frequency, StringComparison.OrdinalIgnoreCase));
+        }
+
+        public bool SubscriptionDefaultChannelTargetParameterMatches(Subscription subscription, IEnumerable<DefaultChannel> defaultChannels)
+        {
+            return string.IsNullOrEmpty(DefaultChannelTarget) || defaultChannels
+                .Where(dc => SubscriptionParameterMatches(DefaultChannelTarget, dc.Channel.Name))
+                .Any(dc => dc.Branch.Contains(subscription.TargetBranch, StringComparison.OrdinalIgnoreCase) && dc.Repository.Equals(subscription.TargetRepository, StringComparison.OrdinalIgnoreCase));
         }
 
         /// <summary>
@@ -127,6 +134,25 @@ namespace Microsoft.DotNet.Darc.Options
             {
                 return subscriptionProperty.Contains(inputParameter, StringComparison.OrdinalIgnoreCase);
             }
+        }
+
+        /// <summary>
+        /// Determine whether the set of input options has any valid filters.
+        /// </summary>
+        /// <returns>True if there are valid filters, false otherwise.</returns>
+        public bool HasAnyFilters()
+        {
+            return !string.IsNullOrEmpty(TargetRepository) ||
+                   !string.IsNullOrEmpty(TargetBranch) ||
+                   !string.IsNullOrEmpty(SourceRepository) ||
+                   !string.IsNullOrEmpty(Channel) ||
+                   Frequencies.Any() ||
+                   !string.IsNullOrEmpty(DefaultChannelTarget) ||
+                   Disabled ||
+                   Enabled ||
+                   Batchable ||
+                   NotBatchable ||
+                   SubscriptionIds.Any();
         }
     }
 }

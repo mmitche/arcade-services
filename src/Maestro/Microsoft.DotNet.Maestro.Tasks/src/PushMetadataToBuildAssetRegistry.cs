@@ -18,6 +18,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Xml.Serialization;
 using MSBuild = Microsoft.Build.Utilities;
+using Microsoft.DotNet.VersionTools.BuildManifest;
 
 namespace Microsoft.DotNet.Maestro.Tasks
 {
@@ -38,6 +39,7 @@ namespace Microsoft.DotNet.Maestro.Tasks
 
         public string RepoRoot { get; set; }
 
+        private const string SearchPattern = "*.xml";
         private readonly CancellationTokenSource _tokenSource = new CancellationTokenSource();
 
         public void Cancel()
@@ -72,6 +74,12 @@ namespace Microsoft.DotNet.Maestro.Tasks
                 {
                     List<BuildData> buildsManifestMetadata = GetBuildManifestsMetadata(ManifestsPath, cancellationToken);
 
+                    if (buildsManifestMetadata.Count == 0)
+                    {
+                        Log.LogError($"No build manifests found matching the search pattern {SearchPattern} in {ManifestsPath}");
+                        return !Log.HasLoggedErrors;
+                    }
+
                     BuildData finalBuild = MergeBuildManifests(buildsManifestMetadata);
 
                     IMaestroApi client = ApiFactory.GetAuthenticated(MaestroApiEndpoint, BuildAssetRegistryToken);
@@ -91,13 +99,12 @@ namespace Microsoft.DotNet.Maestro.Tasks
                     // Only 'create' the AzDO (VSO) variables if running in an AzDO build
                     if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("BUILD_BUILDID")))
                     {
-                        var defaultChannels = await client.DefaultChannels.ListAsync(
-                            recordedBuild.GitHubBranch ?? recordedBuild.AzureDevOpsBranch,
-                            channelId: null,
-                            enabled: true,
-                            recordedBuild.GitHubRepository ?? recordedBuild.AzureDevOpsRepository);
+                        IEnumerable<DefaultChannel> defaultChannels = await GetBuildDefaultChannelsAsync(client, recordedBuild);
 
-                        var defaultChannelsStr = "[" + string.Join("][", defaultChannels.Select(x => x.Channel.Id)) + "]";
+                        HashSet<int> targetChannelIds = new HashSet<int>(defaultChannels.Select(dc => dc.Channel.Id));
+
+                        var defaultChannelsStr = "[" + string.Join("][", targetChannelIds) + "]";
+                        Log.LogMessage(MessageImportance.High, $"Determined build will be added to the following channels: { defaultChannelsStr}");
 
                         Console.WriteLine($"##vso[task.setvariable variable=BARBuildId]{recordedBuild.Id}");
                         Console.WriteLine($"##vso[task.setvariable variable=DefaultChannels]{defaultChannelsStr}");
@@ -113,6 +120,42 @@ namespace Microsoft.DotNet.Maestro.Tasks
             return !Log.HasLoggedErrors;
         }
 
+        private async Task<IEnumerable<DefaultChannel>> GetBuildDefaultChannelsAsync(IMaestroApi client, Client.Models.Build recordedBuild)
+        {
+            var defaultChannels = new List<DefaultChannel>();
+            if (recordedBuild.GitHubBranch != null && recordedBuild.GitHubRepository != null)
+            {
+                defaultChannels.AddRange(
+                    await client.DefaultChannels.ListAsync(
+                        branch: recordedBuild.GitHubBranch,
+                        channelId: null,
+                        enabled: true,
+                        repository: recordedBuild.GitHubRepository
+                    ));
+            }
+
+            if (recordedBuild.AzureDevOpsBranch != null && recordedBuild.AzureDevOpsRepository != null)
+            {
+                defaultChannels.AddRange(
+                    await client.DefaultChannels.ListAsync(
+                        branch: recordedBuild.AzureDevOpsBranch,
+                        channelId: null,
+                        enabled: true,
+                        repository: recordedBuild.AzureDevOpsRepository
+                    ));
+            }
+
+            Log.LogMessage(MessageImportance.High, "Found the following default channels:");
+            foreach (var defaultChannel in defaultChannels)
+            {
+                Log.LogMessage(
+                    MessageImportance.High,
+                    $"    {defaultChannel.Repository}@{defaultChannel.Branch} " +
+                    $"=> ({defaultChannel.Channel.Id}) {defaultChannel.Channel.Name}");
+            }
+            return defaultChannels;
+        }
+
         private async Task<IImmutableList<BuildRef>> GetBuildDependenciesAsync(
             IMaestroApi client,
             CancellationToken cancellationToken)
@@ -121,10 +164,11 @@ namespace Microsoft.DotNet.Maestro.Tasks
             var local = new Local(logger, RepoRoot);
             IEnumerable<DependencyDetail> dependencies = await local.GetDependenciesAsync();
             var builds = new Dictionary<int, bool>();
-            var assetCache = new Dictionary<(string name, string version), int>();
+            var assetCache = new Dictionary<(string name, string version, string commit), int>();
+            var buildCache = new Dictionary<int, Client.Models.Build>();
             foreach (var dep in dependencies)
             {
-                var buildId = await GetBuildId(dep, client, assetCache, cancellationToken);
+                var buildId = await GetBuildId(dep, client, buildCache, assetCache, cancellationToken);
                 if (buildId == null)
                 {
                     Log.LogMessage(
@@ -149,17 +193,35 @@ namespace Microsoft.DotNet.Maestro.Tasks
                 }
             }
 
-            return builds.Select(t => new BuildRef(t.Key, t.Value)).ToImmutableList();
+            return builds.Select(t => new BuildRef(t.Key, t.Value, 0)).ToImmutableList();
         }
 
-        private static async Task<int?> GetBuildId(DependencyDetail dep, IMaestroApi client, Dictionary<(string name, string version), int> assetCache, CancellationToken cancellationToken)
+        private static async Task<int?> GetBuildId(DependencyDetail dep, IMaestroApi client, Dictionary<int, Client.Models.Build> buildCache,
+            Dictionary<(string name, string version, string commit), int> assetCache, CancellationToken cancellationToken)
         {
-            if (assetCache.TryGetValue((dep.Name, dep.Version), out int value))
+            if (assetCache.TryGetValue((dep.Name, dep.Version, dep.Commit), out int value))
             {
                 return value;
             }
-            var assets = await client.Assets.ListAssetsAsync(name: dep.Name, version: dep.Version, cancellationToken: cancellationToken);
-            var buildId = assets.OrderByDescending(a => a.Id).FirstOrDefault()?.BuildId;
+            var assets = client.Assets.ListAssetsAsync(name: dep.Name, version: dep.Version, cancellationToken: cancellationToken);
+            List<Asset> matchingAssetsFromSameSha = new List<Asset>();
+
+            // Filter out those assets which do not have matching commits
+            await foreach (Asset asset in assets)
+            {
+                if (!buildCache.TryGetValue(asset.BuildId, out Client.Models.Build producingBuild))
+                {
+                    producingBuild = await client.Builds.GetBuildAsync(asset.BuildId);
+                    buildCache.Add(asset.BuildId, producingBuild);
+                }
+
+                if (producingBuild.Commit == dep.Commit)
+                {
+                    matchingAssetsFromSameSha.Add(asset);
+                }
+            }
+
+            var buildId = matchingAssetsFromSameSha.OrderByDescending(a => a.Id).FirstOrDefault()?.BuildId;
             if (!buildId.HasValue)
             {
                 return null;
@@ -170,9 +232,9 @@ namespace Microsoft.DotNet.Maestro.Tasks
             var build = await client.Builds.GetBuildAsync(buildId.Value, cancellationToken);
             foreach (var asset in build.Assets)
             {
-                if (!assetCache.ContainsKey((asset.Name, asset.Version)))
+                if (!assetCache.ContainsKey((asset.Name, asset.Version, build.Commit)))
                 {
-                    assetCache.Add((asset.Name, asset.Version), build.Id);
+                    assetCache.Add((asset.Name, asset.Version, build.Commit), build.Id);
                 }
             }
 
@@ -181,7 +243,7 @@ namespace Microsoft.DotNet.Maestro.Tasks
 
         private string GetVersion(string assetId)
         {
-            return VersionManager.GetVersion(assetId);
+            return VersionIdentifier.GetVersion(assetId);
         }
 
         private List<BuildData> GetBuildManifestsMetadata(
@@ -190,7 +252,7 @@ namespace Microsoft.DotNet.Maestro.Tasks
         {
             var buildsManifestMetadata = new List<BuildData>();
 
-            foreach (string manifestPath in Directory.GetFiles(manifestsFolderPath, "*.xml", SearchOption.AllDirectories))
+            foreach (string manifestPath in Directory.GetFiles(manifestsFolderPath, SearchPattern, SearchOption.AllDirectories))
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
@@ -242,7 +304,8 @@ namespace Microsoft.DotNet.Maestro.Tasks
                         azureDevOpsBuildNumber: manifest.AzureDevOpsBuildNumber ?? GetAzDevBuildNumber(),
                         azureDevOpsRepository: manifest.AzureDevOpsRepository ?? GetAzDevRepository(),
                         azureDevOpsBranch: manifest.AzureDevOpsBranch ?? GetAzDevBranch(),
-                        publishUsingPipelines: PublishUsingPipelines)
+                        publishUsingPipelines: PublishUsingPipelines,
+                        released: false)
                     {
                         Assets = assets.ToImmutableList(),
                         AzureDevOpsBuildId = manifest.AzureDevOpsBuildId ?? GetAzDevBuildId(),
@@ -350,6 +413,10 @@ namespace Microsoft.DotNet.Maestro.Tasks
 
                 mergedBuild.Assets = mergedBuild.Assets.AddRange(build.Assets);
             }
+
+            // Remove duplicated assets based on the top level properties of the asset.
+            // The AssetLocations property isn't set at this point yet.
+            mergedBuild.Assets = mergedBuild.Assets.Distinct(new AssetDataComparer()).ToImmutableList();
 
             LookupForMatchingGitHubRepository(mergedBuild);
 

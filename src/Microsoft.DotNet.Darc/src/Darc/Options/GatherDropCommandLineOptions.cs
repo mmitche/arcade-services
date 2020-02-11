@@ -4,14 +4,15 @@
 
 using CommandLine;
 using Microsoft.DotNet.Darc.Operations;
+using System.Collections.Generic;
 
 namespace Microsoft.DotNet.Darc.Options
 {
     [Verb("gather-drop", HelpText = "Gather a drop of the outputs for a build")]
     internal class GatherDropCommandLineOptions : CommandLineOptions
     {
-        [Option('i', "id", HelpText = "BAR ID of build.")]
-        public int RootBuildId { get; set; }
+        [Option('i', "id", Separator = ',', HelpText = "BAR ID(s) of the root build(s) that we want to gather. comma separated.")]
+        public IEnumerable<int> RootBuildIds { get; set; }
 
         [Option('r', "repo", HelpText = "Gather a build drop for a build of this repo. Requires --commit or --channel.")]
         public string RepoUri { get; set; }
@@ -21,6 +22,12 @@ namespace Microsoft.DotNet.Darc.Options
 
         [Option('o',"output-dir", Required = true, HelpText = "Output directory to place build drop.")]
         public string OutputDirectory { get; set; }
+
+        [Option("max-downloads", Default = 4, HelpText = "Maximum concurrent downloads.")]
+        public int MaxConcurrentDownloads { get; set; }
+
+        [Option("download-timeout", Default = 30, HelpText = "Timeout in seconds for downloading each asset.")]
+        public int AssetDownloadTimeoutInSeconds { get; set; }
 
         [Option('f', "full", HelpText = "Gather the full drop (build and all input builds).")]
         public bool Transitive { get; set; }
@@ -64,9 +71,18 @@ namespace Microsoft.DotNet.Darc.Options
         [Option("skip-existing", HelpText = "Skip files that already exist at the destination.")]
         public bool SkipExisting { get; set; }
 
+        [Option("skip-released", HelpText = "Skip builds that are marked as released")]
+        public bool SkipReleased { get; set; }
+
         [Option("latest-location", HelpText = "Download assets from their latest known location.")]
         public bool LatestLocation { get; set; }
 
+        [Option("sas-suffixes", Separator = ',', HelpText = "List of potential uri suffixes that can be used if anonymous " +
+            "access to a blob uri fails. Appended directly to the end of the URI (use full SAS suffix starting with '?'.")]
+        public IEnumerable<string> SASSuffixes { get; set; }
+
+        [Option("asset-filter", HelpText = "Only download assets matching the given regex filter")]
+        public string AssetFilter { get; set; }
 
         public override Operation GetOperation()
         {

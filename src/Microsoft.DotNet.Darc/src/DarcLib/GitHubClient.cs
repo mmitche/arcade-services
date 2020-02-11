@@ -18,6 +18,7 @@ using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
+using Microsoft.DotNet.Services.Utility;
 
 namespace Microsoft.DotNet.DarcLib
 {
@@ -425,12 +426,13 @@ namespace Microsoft.DotNet.DarcLib
             // arcade update sent to each repository daily per subscription. This is inefficient, as it means we
             // request each file N times, where N is the number of subscriptions. The number of files (M),
             // is non-trivial, so reducing N*M to M is vast improvement.
-            // Use the treeItem.Sha as the key. I think it is overkill to hash the repo and owner into
+            // Use a combination of (treeItem.Path, treeItem.Sha as the key) as items with identical contents but
+            // different paths will have the same SHA. I think it is overkill to hash the repo and owner into
             // the key.
 
             if (Cache != null)
             {
-                return await Cache.GetOrCreateAsync(treeItem.Sha, async (entry) =>
+                return await Cache.GetOrCreateAsync((treeItem.Path, treeItem.Sha), async (entry) =>
                 {
                     GitFile file = await GetGitItemImpl(path, treeItem, owner, repo);
 
@@ -480,8 +482,8 @@ namespace Microsoft.DotNet.DarcLib
             GitFile newFile = new GitFile(
                 path + "/" + treeItem.Path,
                 blob.Content,
-                encoding)
-            { Mode = treeItem.Mode };
+                encoding,
+                treeItem.Mode);
 
             return newFile;
         }
@@ -563,7 +565,7 @@ namespace Microsoft.DotNet.DarcLib
         /// </summary>
         /// <param name="repoUri">Repository uri</param>
         /// <param name="branch">Branch to retrieve the latest sha for</param>
-        /// <returns>Latest sha.  Throws if no commits were found.</returns>
+        /// <returns>Latest sha.  Nulls if no commits were found.</returns>
         public Task<string> GetLastCommitShaAsync(string repoUri, string branch)
         {
             (string owner, string repo) = ParseRepoUri(repoUri);
@@ -579,21 +581,23 @@ namespace Microsoft.DotNet.DarcLib
         /// <returns>Latest sha.  Throws if no commits were found.</returns>
         private async Task<string> GetLastCommitShaAsync(string owner, string repo, string branch)
         {
-            JObject content;
-            using (HttpResponseMessage response = await this.ExecuteRemoteGitCommandAsync(
-                HttpMethod.Get,
-                $"repos/{owner}/{repo}/commits/{branch}",
-                _logger))
+            try
             {
-                content = JObject.Parse(await response.Content.ReadAsStringAsync());
-            }
+                JObject content;
+                using (HttpResponseMessage response = await this.ExecuteRemoteGitCommandAsync(
+                    HttpMethod.Get,
+                    $"repos/{owner}/{repo}/commits/{branch}",
+                    _logger))
+                {
+                    content = JObject.Parse(await response.Content.ReadAsStringAsync());
+                }
 
-            if (content == null)
+                return content["sha"].ToString();
+            }
+            catch (HttpRequestException exc) when (exc.Message.Contains(((int)HttpStatusCode.NotFound).ToString()))
             {
-                throw new DarcException($"No commits found in branch '{branch}' of repo '{owner}/{repo}'!");
+                return null;
             }
-
-            return content["sha"].ToString();
         }
 
         /// <summary>
@@ -955,6 +959,29 @@ namespace Microsoft.DotNet.DarcLib
         public void AddRemoteIfMissing(string repoDir, string repoUrl)
         {
             throw new NotImplementedException($"Cannot add a remote to a remote repo.");
+        }
+
+        /// <summary>
+        /// Checks that a repository exists
+        /// </summary>
+        /// <param name="repoUri">Repository uri</param>
+        /// <returns>True if the repository exists, false otherwise.</returns>
+        public async Task<bool> RepoExistsAsync(string repoUri)
+        {
+            (string owner, string repo) = ParseRepoUri(repoUri);
+
+            try
+            {
+                using (await this.ExecuteRemoteGitCommandAsync(
+                      HttpMethod.Get,
+                      $"repos/{owner}/{repo}",
+                      _logger,
+                      logFailure: false)) { }
+                return true;
+            }
+            catch (Exception) { }
+
+            return false;
         }
     }
 }

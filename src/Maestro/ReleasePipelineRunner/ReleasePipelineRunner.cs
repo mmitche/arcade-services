@@ -11,9 +11,9 @@ using Maestro.AzureDevOps;
 using Maestro.Contracts;
 using Maestro.Data;
 using Maestro.Data.Models;
-using Maestro.GitHub;
 using Microsoft.DotNet.DarcLib;
 using Microsoft.DotNet.Git.IssueManager;
+using Microsoft.Dotnet.GitHub.Authentication;
 using Microsoft.DotNet.ServiceFabric.ServiceHost;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
@@ -268,6 +268,13 @@ namespace ReleasePipelineRunner
 
             Logger.LogInformation($"Found {channel.ChannelReleasePipelines.Count} pipeline(s) for channel {channelId}");
 
+            if (channel.ChannelReleasePipelines.Select(pipeline => 
+                pipeline.ReleasePipeline.Organization).Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1)
+            {
+                Logger.LogError($"Multiple pipelines in different organizations are not supported (channel {channel.Id}).");
+                return;
+            }
+
             foreach (ChannelReleasePipeline pipeline in channel.ChannelReleasePipelines)
             {
                 try
@@ -275,6 +282,24 @@ namespace ReleasePipelineRunner
                     string organization = pipeline.ReleasePipeline.Organization;
                     string project = pipeline.ReleasePipeline.Project;
                     int pipelineId = pipeline.ReleasePipeline.PipelineIdentifier;
+
+                    // If the release definition is in a separate organization or project than the
+                    // build, running the release won't work. This is not that interesting anymore as the repos that have
+                    // this issue are on stages. So we can just skip them.
+                    if (!organization.Equals(build.AzureDevOpsAccount, StringComparison.OrdinalIgnoreCase) ||
+                        !project.Equals(build.AzureDevOpsProject, StringComparison.OrdinalIgnoreCase))
+                    {
+                        Logger.LogWarning($"Skipping release of build {build.Id} because it is not in the same organzation or project as the release definition.");
+                        await AddFinishedBuildChannelsIfNotPresent(new HashSet<BuildChannel> {
+                            new BuildChannel
+                            {
+                                BuildId = buildId,
+                                ChannelId = channelId,
+                                DateTimeAdded = DateTimeOffset.UtcNow
+                            }
+                        });
+                        break;
+                    }
 
                     Logger.LogInformation($"Going to create a release using pipeline {organization}/{project}/{pipelineId}");
 
@@ -396,7 +421,8 @@ namespace ReleasePipelineRunner
                                 buildChannelsToAdd.Add(new BuildChannel
                                 {
                                     BuildId = buildId,
-                                    ChannelId = channelId
+                                    ChannelId = channelId,
+                                    DateTimeAdded = DateTimeOffset.UtcNow
                                 });
                             }
                             else
@@ -412,8 +438,7 @@ namespace ReleasePipelineRunner
 
                 if (buildChannelsToAdd.Count > 0)
                 {
-                    List<BuildChannel> addedBuildChannels = await AddFinishedBuildChannelsIfNotPresent(buildChannelsToAdd);
-                    await TriggerDependencyUpdates(addedBuildChannels);
+                    await AddFinishedBuildChannelsIfNotPresent(buildChannelsToAdd);
                 }
                 await tx.CommitAsync();
             }
@@ -442,7 +467,7 @@ namespace ReleasePipelineRunner
             return new AzureDevOpsClient(null, accessToken, Logger, null);
         }
 
-        private async Task<List<BuildChannel>> AddFinishedBuildChannelsIfNotPresent(HashSet<BuildChannel> buildChannelsToAdd)
+        private async Task AddFinishedBuildChannelsIfNotPresent(HashSet<BuildChannel> buildChannelsToAdd)
         {
             HashSet<int> channels = new HashSet<int>(Context.Channels.Select(b => b.Id));
 
@@ -453,7 +478,8 @@ namespace ReleasePipelineRunner
             var missingBuildChannels = buildChannelsToAdd.Where(x => !Context.BuildChannels.Any(y => y.ChannelId == x.ChannelId && y.BuildId == x.BuildId)).ToList();
             Context.BuildChannels.AddRange(missingBuildChannels);
             await Context.SaveChangesAsync();
-            return missingBuildChannels;
+            // Trigger any dependency updates from the new build.
+            await TriggerDependencyUpdates(missingBuildChannels);
         }
 
         private async Task CreateGitHubIssueAsync(int buildId, int releaseId, string releaseName)
@@ -476,7 +502,7 @@ namespace ReleasePipelineRunner
                     {
                         IGitHubTokenProvider gitHubTokenProvider = Context.GetService<IGitHubTokenProvider>();
                         long installationId = await Context.GetInstallationId(build.GitHubRepository);
-                        gitHubToken = await gitHubTokenProvider.GetTokenForInstallation(installationId);
+                        gitHubToken = await gitHubTokenProvider.GetTokenForInstallationAsync(installationId);
 
                         Logger.LogInformation($"GitHub token acquired for '{build.GitHubRepository}'!");
                     }
@@ -506,7 +532,7 @@ namespace ReleasePipelineRunner
                         // different repo.
                         IGitHubTokenProvider gitHubTokenProvider = Context.GetService<IGitHubTokenProvider>();
                         long installationId = await Context.GetInstallationId(whereToCreateIssue);
-                        gitHubToken = await gitHubTokenProvider.GetTokenForInstallation(installationId);
+                        gitHubToken = await gitHubTokenProvider.GetTokenForInstallationAsync(installationId);
 
                         Logger.LogInformation($"GitHub token acquired for '{whereToCreateIssue}'!");
 

@@ -112,7 +112,7 @@ namespace SubscriptionActorService
             throw new NotImplementedException();
         }
 
-        public Task AssignBuildToChannel(int buildId, int channelId)
+        public Task AssignBuildToChannelAsync(int buildId, int channelId)
         {
             throw new NotImplementedException();
         }
@@ -149,6 +149,11 @@ namespace SubscriptionActorService
             }
 
             return ToClientModelBuild(build);
+        }
+
+        public Task<Build> UpdateBuildAsync(int buildId, BuildUpdate buildUpdate)
+        {
+            throw new NotImplementedException();
         }
 
         /// <summary>
@@ -217,14 +222,42 @@ namespace SubscriptionActorService
 
         private Build ToClientModelBuild(Maestro.Data.Models.Build other)
         {
-            return new Build(other.Id, other.DateProduced, other.PublishUsingPipelines, other.Commit,
-                null, other.Assets?.Select(a => ToClientModelAsset(a)).ToImmutableList(), null)
+            return new Build(other.Id, other.DateProduced, other.Staleness, false, true, other.Commit,
+                null, other.Assets?.Select(a => ToClientModelAsset(a)).ToImmutableList(),
+                other.DependentBuildIds?.Select(b => new BuildRef(b.BuildId, b.IsProduct, b.TimeToInclusionInMinutes)).ToImmutableList())
             {
                 AzureDevOpsBranch = other.AzureDevOpsBranch,
                 GitHubBranch = other.GitHubBranch,
                 GitHubRepository = other.GitHubRepository,
                 AzureDevOpsRepository = other.AzureDevOpsRepository,
             };
+        }
+
+        public Task<Channel> GetChannelAsync(int channelId)
+        {
+            throw new NotImplementedException();
+        }
+
+        ///  Unsupported method
+        public Task<Goal> SetGoalAsync(string channel, int definitionId, int minutes)
+        {
+            throw new NotImplementedException();
+        }
+
+        ///  Unsupported method
+        public Task<Goal> GetGoalAsync(string channel, int definitionId)
+        {
+            throw new NotImplementedException();
+        }
+
+        public Task DeleteBuildFromChannelAsync(int buildId, int channelId)
+        {
+            throw new NotImplementedException();
+        }
+        
+        public Task<BuildTime> GetBuildTimeAsync(int defaultChannelId, int days)
+        {
+            throw new NotImplementedException();
         }
     }
 }

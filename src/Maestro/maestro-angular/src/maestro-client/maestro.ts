@@ -6,6 +6,7 @@ import { parseISO } from "date-fns";
 
 import * as models from "./models";
 import { Helper } from "./helper";
+import { query } from '@angular/core/src/render3';
 
 type RequestOptions = {
   body?: any;
@@ -726,6 +727,12 @@ export interface IChannelsApi {
         }
     ): Observable<models.Channel[]>;
 
+    listRepositoriesAsync(
+        parameters: {
+            id: number,
+        }
+    ): Observable<string[]>;
+
     createChannelAsync(
         parameters: {
             classification: string,
@@ -765,6 +772,12 @@ export interface IChannelsApi {
             pipelineId: number,
         }
     ): Observable<void>;
+
+    getFlowGraphAsync(
+        parameters: {
+            id: number,
+        }
+    ): Observable<models.FlowGraph>;
 }
 
 export class ChannelsApiService implements IChannelsApi {
@@ -811,6 +824,41 @@ export class ChannelsApiService implements IChannelsApi {
             map(raw => raw.map((e: any) => models.Channel.fromRawObject(e)))
         );
 
+    }
+
+    public listRepositoriesAsync(
+        {
+            id
+        }: {
+            id: number
+        }
+    ): Observable<string[]> {
+        if (id === undefined) {
+            throw new Error("Required parameter id is undefined.");
+        }
+
+        const apiVersion = "2019-01-16";
+        let _path = this.options.baseUrl;
+        if (_path.endsWith("/")) {
+            _path = _path.slice(0, -1);
+        }
+        _path = _path + "/api/channels/{id}/repositories";
+        _path = _path.replace("{id}", id + "");
+
+        let queryParameters = new HttpParams();
+        let headerParameters = new HttpHeaders(this.options.defaultHeaders);
+
+        queryParameters = queryParameters.set("api-version", apiVersion);
+
+        return this.client.request(
+            "get",
+            _path,
+            {
+                headers: headerParameters,
+                params: queryParameters,
+                responseType: "json",
+            }
+        );
     }
 
     public createChannelAsync(
@@ -1079,6 +1127,46 @@ export class ChannelsApiService implements IChannelsApi {
                 params: queryParameters,
                 responseType: "text",
             }
+        );
+
+    }
+
+    public getFlowGraphAsync(
+        {
+            id,
+        }: {
+            id: number,
+        }
+    ): Observable<models.FlowGraph> {
+        const apiVersion = "2019-01-16";
+        let _path = this.options.baseUrl;
+        if (_path.endsWith("/"))
+        {
+            _path = _path.slice(0, -1);
+        }
+        _path = _path + "/api/channels/{id}/graph";
+        _path = _path.replace("{id}", id + "");
+
+        let queryParameters = new HttpParams();
+        let headerParameters = new HttpHeaders(this.options.defaultHeaders);
+
+        queryParameters = queryParameters.set("includeDisabledSubscriptions", "false");
+        queryParameters = queryParameters.set("includeBuildTimes", "true");
+        queryParameters = queryParameters.set("days", "7");
+
+        queryParameters = queryParameters.set("api-version", apiVersion);
+
+
+        return this.client.request(
+            "get",
+            _path,
+            {
+                headers: headerParameters,
+                params: queryParameters,
+                responseType: "json",
+            }
+        ).pipe(
+            map(raw => models.FlowGraph.fromRawObject(raw))
         );
 
     }

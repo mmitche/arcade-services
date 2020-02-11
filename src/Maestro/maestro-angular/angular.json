@@ -41,6 +41,10 @@
                 {
                   "replace": "src/environments/environment.ts",
                   "with": "src/environments/environment.prod.ts"
+                },
+                {
+                  "replace": "node_modules/dagre-d3/lib/d3.js",
+                  "with": "src/d3.ts"
                 }
               ],
               "optimization": true,
@@ -88,7 +92,7 @@
             "tsConfig": "src/tsconfig.spec.json",
             "karmaConfig": "src/karma.conf.js",
             "styles": [
-              "src/styles.scss"
+              "src/themes/styles.scss"
             ],
             "scripts": [],
             "assets": [

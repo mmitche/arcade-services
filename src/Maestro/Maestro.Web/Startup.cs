@@ -2,36 +2,6 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 // See the LICENSE file in the project root for more information.
 
-using Autofac;
-using EntityFrameworkCore.Triggers;
-using FluentValidation.AspNetCore;
-using Maestro.AzureDevOps;
-using Maestro.Contracts;
-using Maestro.Data;
-using Maestro.Data.Models;
-using Maestro.GitHub;
-using Maestro.MergePolicies;
-using Microsoft.AspNetCore.ApiPagination;
-using Microsoft.AspNetCore.ApiVersioning;
-using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.DataProtection;
-using Microsoft.AspNetCore.Hosting;
-using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Mvc;
-using Microsoft.AspNetCore.Rewrite;
-using Microsoft.AspNetCore.Rewrite.Internal;
-using Microsoft.Azure.KeyVault;
-using Microsoft.Azure.KeyVault.Models;
-using Microsoft.DotNet.ServiceFabric.ServiceHost;
-using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Infrastructure;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
-using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -41,7 +11,41 @@ using System.Net.Http.Headers;
 using System.Reflection;
 using System.Text;
 using System.Threading.Tasks;
-using IHostingEnvironment = Microsoft.AspNetCore.Hosting.IHostingEnvironment;
+using Autofac;
+using EntityFrameworkCore.Triggers;
+using FluentValidation.AspNetCore;
+using Maestro.AzureDevOps;
+using Maestro.Contracts;
+using Maestro.Data;
+using Maestro.Data.Models;
+using Maestro.MergePolicies;
+using Microsoft.AspNetCore.ApiPagination;
+using Microsoft.AspNetCore.ApiVersioning;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Rewrite;
+using Microsoft.AspNetCore.Rewrite.Internal;
+using Microsoft.Azure.KeyVault;
+using Microsoft.Azure.KeyVault.Models;
+using Microsoft.DotNet.DarcLib;
+using Microsoft.DotNet.ServiceFabric.ServiceHost;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using Newtonsoft.Json;
+using Microsoft.DotNet.Configuration.Extensions;
+using Microsoft.Dotnet.GitHub.Authentication;
+using Microsoft.DotNet.GitHub.Authentication;
+using Microsoft.DotNet.Kusto;
+using Azure.Identity;
+using Azure.Core;
 
 namespace Maestro.Web
 {
@@ -67,7 +71,7 @@ namespace Maestro.Web
                 }
                 else
                 {
-                    if (build.PublishUsingPipelines && ChannelHasAssociatedReleasePipeline(entity.ChannelId, context))
+                    if (ChannelHasAssociatedReleasePipeline(entity.ChannelId, context))
                     {
                         entry.Cancel = true;
                         var queue = context.GetService<BackgroundQueue>();
@@ -122,10 +126,10 @@ namespace Maestro.Web
                 .FirstOrDefault(c => c.ChannelReleasePipelines.Count > 0) != null;
         }
 
-        public Startup(IHostingEnvironment env)
+        public Startup(IConfiguration configuration, IHostingEnvironment env)
         {
             HostingEnvironment = env;
-            Configuration = ServiceHostConfiguration.Get(env);
+            Configuration = KeyVaultMappedJsonConfigurationExtensions.CreateConfiguration(configuration, env, new ServiceHostKeyVaultProvider(env));
         }
 
         public static readonly TimeSpan LoginCookieLifetime = new TimeSpan(days: 120, hours: 0, minutes: 0, seconds: 0);
@@ -147,8 +151,11 @@ namespace Maestro.Web
 
                 string vaultUri = Configuration["KeyVaultUri"];
                 string keyVaultKeyIdentifierName = dpConfig["KeyIdentifier"];
-                KeyVaultClient kvClient = ServiceHostConfiguration.GetKeyVaultClient(HostingEnvironment);
+                KeyVaultClient kvClient = ServiceHostKeyVaultProvider.CreateKeyVaultClient(HostingEnvironment);
                 KeyBundle key = kvClient.GetKeyAsync(vaultUri, keyVaultKeyIdentifierName).GetAwaiter().GetResult();
+
+
+
                 services.AddDataProtection()
                     .PersistKeysToAzureBlobStorage(new Uri(dpConfig["KeyFileUri"]))
                     .ProtectKeysWithAzureKeyVault(kvClient, key.KeyIdentifier.ToString())
@@ -165,7 +172,7 @@ namespace Maestro.Web
                     options.MinimumSameSitePolicy = SameSiteMode.None;
                 });
 
-            services.AddDbContext<BuildAssetRegistryContext>(
+            services.AddBuildAssetRegistry(
                 options =>
                 {
                     options.UseSqlServer(Configuration.GetSection("BuildAssetRegistry")["ConnectionString"]);
@@ -203,15 +210,18 @@ namespace Maestro.Web
             services.AddServiceFabricService<IReleasePipelineRunner>("fabric:/MaestroApplication/ReleasePipelineRunner");
 
             services.AddGitHubTokenProvider();
+            services.Configure<GitHubClientOptions>(o =>
+            {
+                o.ProductHeader = new Octokit.ProductHeaderValue("Maestro",
+                    Assembly.GetEntryAssembly()
+                        .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
+                        ?.InformationalVersion);
+            });
             services.Configure<GitHubTokenProviderOptions>(
                 (options, provider) =>
                 {
                     IConfigurationSection section = Configuration.GetSection("GitHub");
                     section.Bind(options);
-                    options.ApplicationName = "Maestro";
-                    options.ApplicationVersion = Assembly.GetEntryAssembly()
-                        .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
-                        ?.InformationalVersion;
                 });
             services.AddAzureDevOpsTokenProvider();
             services.Configure<AzureDevOpsTokenProviderOptions>(
@@ -224,8 +234,46 @@ namespace Maestro.Web
                         options.Tokens.Add(token.GetValue<string>("Account"), token.GetValue<string>("Token"));
                     }
                 });
+            services.AddKustoClientProvider(
+                options =>
+                {
+                    IConfigurationSection section = Configuration.GetSection("Kusto");
+                    section.Bind(options);
+                });
+            services.AddSingleton<IRemoteFactory, DarcRemoteFactory>();
 
             services.AddMergePolicies();
+
+
+            // Configure access to Azure App Configuration
+            try
+            {
+                string appConfigEndpointUri = Configuration["AppConfigurationUri"];
+                ConfigurationBuilder builder = new ConfigurationBuilder();
+                TokenCredential credential = appConfigEndpointUri.Contains("maestrolocal") ?
+                    new DefaultAzureCredential() :
+                    (TokenCredential)new ManagedIdentityCredential();
+
+                builder.AddAzureAppConfiguration(options =>
+                {
+                    options.Connect(new Uri(appConfigEndpointUri), credential)
+                        .ConfigureRefresh(refresh =>
+                        {
+                            refresh.Register(".appconfig.featureflag/AutoBuildPromotion")
+                                .SetCacheExpiration(TimeSpan.FromSeconds(1));
+                        }).UseFeatureFlags();
+
+                    Build.s_configurationRefresher = options.GetRefresher();
+                });
+
+                Build.s_dynamicConfigs = builder.Build();
+            }
+            catch (Exception)
+            {
+                // Disable AppConfigs lookup if for some reason the authentication failed
+                Build.s_configurationRefresher = null;
+                Build.s_dynamicConfigs = null;
+            }
         }
 
         public void ConfigureContainer(ContainerBuilder builder)
@@ -352,6 +400,12 @@ namespace Maestro.Web
             // Redirect the entire cookie-authed api if it is in settings.
             if (DoApiRedirect)
             {
+                // when told to not redirect by the request, don't do it.
+                app.MapWhen(ctx => ctx.Request.Cookies.TryGetValue("Skip-Api-Redirect", out _), a =>
+                {
+                    a.UseMvc();
+                });
+
                 app.Run(ApiRedirectHandler);
             }
             else

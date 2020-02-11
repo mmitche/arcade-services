@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
@@ -8,11 +8,15 @@
     <PackageType>MSBuildSdk</PackageType>
     <!-- Octokit is not strong named yet (https://github.com/octokit/octokit.net/blob/master/docs/strong-naming.md) -->
     <SignAssembly>false</SignAssembly>
+    <!-- Build Tasks should not include any dependencies -->
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+    <LangVersion>8.0</LangVersion>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Build" Version="$(MicrosoftBuildVersion)" />
     <PackageReference Include="Microsoft.Build.Tasks.Core" Version="$(MicrosoftBuildTasksCoreVersion)" />
+    <PackageReference Include="Microsoft.DotNet.VersionTools" Version="$(MicrosoftDotNetVersionToolsVersion)" />
   </ItemGroup>
 
   <ItemGroup>
