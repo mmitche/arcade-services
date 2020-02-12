@@ -35,23 +35,20 @@ namespace Microsoft.DotNet.Darc.Operations
         /// The update-subscriptions operation will update an existing set of subscriptions.
         /// Based on an origin set of filters (there must be at least one filter), get the subscriptions
         /// matching those filters. Then determine properties that are the same, and those that are different
-        /// between the subscriptions.  Properties that are the same stay the same in the popup.  Properties that
-        /// are different show up tagged appropriately.  Changing any field will apply the changes to all subscriptions
+        /// between the subscriptions. Properties that are the same stay the same in the popup. Properties that
+        /// are different show up tagged appropriately. Changing any field will apply the changes to all subscriptions.
         /// </summary>
         public override async Task<int> ExecuteAsync()
         {
             IRemote remote = RemoteFactory.GetBarOnlyRemote(_options, Logger);
 
-            if (!_options.HasAtLeastOneFilter())
+            if (!_options.HasAnyFilters())
             {
                 Console.WriteLine("Please specify at least one subscription filter.");
                 return Constants.ErrorCode;
             }
 
-            List<Subscription> subscriptions = (await remote.GetSubscriptionsAsync()).Where(subscription =>
-            {
-                return _options.SubcriptionFilter(subscription);
-            }).ToList();
+            List<Subscription> subscriptions = (await _options.FilterSubscriptions(remote)).ToList();
 
             if (subscriptions.Count == 0)
             {
@@ -60,10 +57,10 @@ namespace Microsoft.DotNet.Darc.Operations
             }
 
             // Pop-up the subscription dialog with the list of subscriptions that can be updated.
-            return await UpdateSubscriptions(subscriptions, remote);
+            return await UpdateSubscriptionsAsync(subscriptions, remote);
         }
 
-        public async Task<int> UpdateSubscriptions(List<Subscription> subscriptions, IRemote remote)
+        public async Task<int> UpdateSubscriptionsAsync(List<Subscription> subscriptions, IRemote remote)
         {
             try
             {
@@ -143,7 +140,7 @@ namespace Microsoft.DotNet.Darc.Operations
                     }
 
                     // Print the information about the updated subscription
-                    await PrintSubscriptionTransformationHelper(subscription, remote, channelChanged, updatedChannelName, sourceRepoChanged, updatedSourceRepo,
+                    await PrintSubscriptionTransformationHelperAsync(subscription, remote, channelChanged, updatedChannelName, sourceRepoChanged, updatedSourceRepo,
                         targetRepoChanged, updatedTargetRepo, targetBranchChanged, updatedTargetBranch, updateFrequencyChanged, updatedUpdateFrequency,
                         enabledChanged, updatedEnabled, batchableChanged, updatedBatchable, mergePoliciesChanged, updatedMergePolicies);
 
@@ -198,7 +195,7 @@ namespace Microsoft.DotNet.Darc.Operations
 
                 return Constants.SuccessCode;
             }
-            catch (RestApiException e) when (e.Response.StatusCode == System.Net.HttpStatusCode.BadRequest)
+            catch (RestApiException e) when (e.Response.Status == (int)System.Net.HttpStatusCode.BadRequest)
             {
                 // Could have been some kind of validation error (e.g. channel doesn't exist)
                 Logger.LogError($"Failed to update subscription: {e.Response.Content}");
@@ -211,7 +208,7 @@ namespace Microsoft.DotNet.Darc.Operations
             }
         }
 
-        private async Task PrintSubscriptionTransformationHelper(Subscription before,
+        private async Task PrintSubscriptionTransformationHelperAsync(Subscription before,
             IRemote remote,
             bool channelChanged, string updatedChannelName,
             bool sourceRepoChanged, string updatedSourceRepo,

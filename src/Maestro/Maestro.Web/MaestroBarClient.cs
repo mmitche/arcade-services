@@ -53,7 +53,7 @@ namespace Maestro.Web
         }
 
         public Task<Subscription> CreateSubscriptionAsync(string channelName, string sourceRepo, string targetRepo, string targetBranch,
-            string updateFrequency, bool batchable, List<MergePolicy> mergePolicies)
+            UpdateFrequency updateFrequency, bool batchable, List<MergePolicy> mergePolicies)
         {
             throw new NotImplementedException();
         }
