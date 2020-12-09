@@ -702,8 +702,7 @@ namespace Microsoft.DotNet.DarcLib
                 if (!nugetConfigCache.TryGetValue(parentCoherentDependencyCacheKey, out IEnumerable<string> nugetFeeds))
                 {
                     IRemote remoteClient = await remoteFactory.GetRemoteAsync(parentCoherentDependency.RepoUri, _logger);
-                    XmlDocument nugetConfig = await _fileManager.ReadNugetConfigAsync(parentCoherentDependency.RepoUri, parentCoherentDependency.Commit);
-                    nugetFeeds = _fileManager.GetPackageSources(nugetConfig).Select(nameAndFeed => nameAndFeed.feed);
+                    nugetFeeds = await remoteClient.GetPackageSourcesAsync(parentCoherentDependency.RepoUri, parentCoherentDependency.Commit);
 
                     nugetConfigCache.Add(parentCoherentDependencyCacheKey, nugetFeeds);
                 }
@@ -1563,6 +1562,13 @@ namespace Microsoft.DotNet.DarcLib
         {
             CheckForValidBarClient();
             return _barClient.GetBuildTimeAsync(defaultChannelId, days);
+        }
+
+        public async Task<IEnumerable<string>> GetPackageSourcesAsync(string repoUri, string commit)
+        {
+            CheckForValidGitClient();
+            XmlDocument nugetConfig = await _fileManager.ReadNugetConfigAsync(repoUri, commit);
+            return _fileManager.GetPackageSources(nugetConfig).Select(nameAndFeed => nameAndFeed.feed);
         }
     }
 }
