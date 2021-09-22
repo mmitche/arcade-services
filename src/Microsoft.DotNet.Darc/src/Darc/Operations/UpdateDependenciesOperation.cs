@@ -108,6 +108,16 @@ namespace Microsoft.DotNet.Darc.Operations
                             Console.WriteLine($"Looking up build with BAR id {_options.BARBuildId}");
                             var specificBuild = await barOnlyRemote.GetBuildAsync(_options.BARBuildId);
 
+                            // If the build is not assigned to a channel, warn. If --channel was also specified, verify that it's in that channel.
+                            if (!specificBuild.Channels.Any())
+                            {
+                                Console.WriteLine($"Warning: Build {_options.BARBuildId} has not been assigned to any channels. Build may fail to restore packages.");
+                            }
+                            else if (!string.IsNullOrEmpty(_options.Channel) && !specificBuild.Channels.Any(c => c.Name.Equals(_options.Channel, StringComparison.OrdinalIgnoreCase)))
+                            {
+                                Console.WriteLine($"Warning: Build {_options.BARBuildId} has not been assigned to channel '{_options.Channel}'. Build may fail to restore packages.");
+                            }
+
                             int nonCoherencyResult = await NonCoherencyUpdatesForBuildAsync(specificBuild, barOnlyRemote, currentDependencies, dependenciesToUpdate)
                                 .ConfigureAwait(false);
                             if (nonCoherencyResult != Constants.SuccessCode)
